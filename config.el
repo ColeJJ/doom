@@ -91,3 +91,6 @@
 (setq-default cursor-type 'box)
 (custom-set-faces
  '(cursor ((t (:background "#00D3D0" :foreground "#00D3D0")))))
+
+;; Bilder inline anzeigen (Org Mode)
+(setq org-startup-with-inline-images t)
