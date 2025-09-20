@@ -92,5 +92,25 @@
 (custom-set-faces
  '(cursor ((t (:background "#00D3D0" :foreground "#00D3D0")))))
 
+<<<<<<< Updated upstream
 ;; Bilder inline anzeigen (Org Mode)
 (setq org-startup-with-inline-images t)
+=======
+;; Latex PDF Viewer
+(after! tex
+  ;; Standard: LatexMk benutzen
+  (setq ;; PDF in Emacs via pdf-tools anzeigen
+        TeX-view-program-selection '((output-pdf "PDF Tools"))
+        ;; Quelle↔PDF SyncTeX-Server starten
+        TeX-source-correlate-start-server t)
+
+  ;; Quelle↔PDF Korrelation in LaTeX-Buffern aktivieren
+  (add-hook 'LaTeX-mode-hook #'TeX-source-correlate-mode)
+  ;; pdf-tools für geöffnete PDFs aktivieren
+  (add-hook 'TeX-after-compilation-finished-functions #'TeX-revert-document-buffer))
+
+;; add org folders
+(setq org-agenda-files
+      (append (directory-files-recursively "~/work/org" "\\.org$")
+              (directory-files-recursively "~/life/org" "\\.org$")))
+>>>>>>> Stashed changes
