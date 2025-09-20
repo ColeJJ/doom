@@ -92,10 +92,9 @@
 (custom-set-faces
  '(cursor ((t (:background "#00D3D0" :foreground "#00D3D0")))))
 
-<<<<<<< Updated upstream
 ;; Bilder inline anzeigen (Org Mode)
 (setq org-startup-with-inline-images t)
-=======
+
 ;; Latex PDF Viewer
 (after! tex
   ;; Standard: LatexMk benutzen
@@ -113,4 +112,3 @@
 (setq org-agenda-files
       (append (directory-files-recursively "~/work/org" "\\.org$")
               (directory-files-recursively "~/life/org" "\\.org$")))
->>>>>>> Stashed changes
