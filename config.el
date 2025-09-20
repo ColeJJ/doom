@@ -112,3 +112,8 @@
 (setq org-agenda-files
       (append (directory-files-recursively "~/work/org" "\\.org$")
               (directory-files-recursively "~/life/org" "\\.org$")))
+
+
+;; GOLANG
+;; vor dem Speichern formatieren
+(add-hook 'before-save-hook #'gofmt-before-save)
