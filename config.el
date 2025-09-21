@@ -122,5 +122,8 @@
 (after! lsp-ui
   ;; Hover-Fenster aktivieren
   (setq lsp-ui-doc-enable t
-        lsp-ui-doc-show-with-cursor t
+        lsp-ui-doc-show-with-cursor nil
         lsp-ui-doc-show-with-mouse nil))
+(after! lsp-mode
+  (map! :map lsp-mode-map
+        :n "Q" #'lsp-ui-doc-show))
