@@ -117,3 +117,10 @@
 ;; GOLANG
 ;; vor dem Speichern formatieren
 (add-hook 'before-save-hook #'gofmt-before-save)
+
+;; hover fuer typen
+(after! lsp-ui
+  ;; Hover-Fenster aktivieren
+  (setq lsp-ui-doc-enable t
+        lsp-ui-doc-show-with-cursor t
+        lsp-ui-doc-show-with-mouse nil))
