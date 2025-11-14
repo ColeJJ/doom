@@ -110,8 +110,7 @@
 
 ;; add org folders
 (setq org-agenda-files
-      (append (directory-files-recursively "~/work/org" "\\.org$")
-              (directory-files-recursively "~/life/org" "\\.org$")))
+      (append (directory-files-recursively "~/work/org" "\\.org$")))
 
 
 ;; GOLANG
@@ -127,3 +126,16 @@
 (after! lsp-mode
   (map! :map lsp-mode-map
         :n "Q" #'lsp-ui-doc-show))
+
+
+;; Open file in finder (macos)
+(defun tu/open-in-finder ()
+  "Öffne den Finder im Verzeichnis der aktuellen Datei."
+  (interactive)
+  (when buffer-file-name
+    (shell-command (concat "open " (file-name-directory buffer-file-name)))))
+
+;; Optional: Keybinding, z. B. unter SPC o f (Space-o-f)
+(map! :leader
+      :desc "Open in Finder"
+      "o f" #'tu/open-in-finder)
