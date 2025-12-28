@@ -122,13 +122,15 @@
   (map! :map lsp-mode-map
         :n "Q" #'lsp-ui-doc-show))
 
-;; Keybinding to open finder
+
+;; Open file in finder (macos)
 (defun tu/open-in-finder ()
-  "Opens the finder within the current path of the present file."
+  "Öffne den Finder im Verzeichnis der aktuellen Datei."
   (interactive)
   (when buffer-file-name
     (shell-command (concat "open " (file-name-directory buffer-file-name)))))
 
+;; Optional: Keybinding, z. B. unter SPC o f (Space-o-f)
 (map! :leader
       :desc "Open in Finder"
       "o f" #'tu/open-in-finder)
