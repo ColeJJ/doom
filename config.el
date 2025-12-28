@@ -108,12 +108,6 @@
   ;; pdf-tools für geöffnete PDFs aktivieren
   (add-hook 'TeX-after-compilation-finished-functions #'TeX-revert-document-buffer))
 
-;; add org folders
-(setq org-agenda-files
-      (append (directory-files-recursively "~/work/org" "\\.org$")
-              (directory-files-recursively "~/life/org" "\\.org$")))
-
-
 ;; GOLANG
 ;; vor dem Speichern formatieren
 (add-hook 'before-save-hook #'gofmt-before-save)
@@ -127,3 +121,14 @@
 (after! lsp-mode
   (map! :map lsp-mode-map
         :n "Q" #'lsp-ui-doc-show))
+
+;; Keybinding to open finder
+(defun tu/open-in-finder ()
+  "Opens the finder within the current path of the present file."
+  (interactive)
+  (when buffer-file-name
+    (shell-command (concat "open " (file-name-directory buffer-file-name)))))
+
+(map! :leader
+      :desc "Open in Finder"
+      "o f" #'tu/open-in-finder)
