@@ -108,11 +108,6 @@
   ;; pdf-tools für geöffnete PDFs aktivieren
   (add-hook 'TeX-after-compilation-finished-functions #'TeX-revert-document-buffer))
 
-;; add org folders
-(setq org-agenda-files
-      (append (directory-files-recursively "~/work/org" "\\.org$")))
-
-
 ;; GOLANG
 ;; vor dem Speichern formatieren
 (add-hook 'before-save-hook #'gofmt-before-save)
