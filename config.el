@@ -138,3 +138,8 @@
 ;; Farbe im gruber-darker theme org mode fuer H2 anpassen
 (with-eval-after-load 'gruber-darker-theme
   (set-face-attribute 'org-level-2 nil :foreground "#97CB8F" :weight 'bold))
+
+;; binding for edit all occurrences
+(map! :leader
+      :desc "Edit all occurrences"
+      "e a" #'iedit-mode)
