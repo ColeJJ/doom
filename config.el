@@ -137,9 +137,21 @@
 
 ;; Farbe im gruber-darker theme org mode fuer H2 anpassen
 (with-eval-after-load 'gruber-darker-theme
-  (set-face-attribute 'org-level-2 nil :foreground "#97CB8F" :weight 'bold))
+  (set-face-attribute 'org-level-1 nil
+                      :foreground "#97CB8F"
+                      :weight 'bold)
+  (set-face-attribute 'org-level-2 nil
+                      :foreground "#96a6c8"
+                      :weight 'bold))
 
 ;; binding for edit all occurrences
 (map! :leader
       :desc "Edit all occurrences"
       "e a" #'iedit-mode)
+
+;; Parent-Task wird DONE, wenn alle Childs DONE sind / Prozentberechnung / Saubere Logs
+(after! org
+  (setq org-log-done 'time
+        org-log-into-drawer t
+        org-enforce-todo-dependencies t
+        org-hierarchical-todo-statistics t))
