@@ -155,3 +155,15 @@
         org-log-into-drawer t
         org-enforce-todo-dependencies t
         org-hierarchical-todo-statistics t))
+
+
+;; Latex Zeile-Zeile anstelle der Block Zeilen
+(add-hook 'LaTeX-mode-hook #'visual-line-mode)
+(setq evil-respect-visual-line-mode t)
+(map! :map LaTeX-mode-map
+      :n "j" #'evil-next-visual-line
+      :n "k" #'evil-previous-visual-line)
+(map! :map LaTeX-mode-map
+      :n "0" #'evil-beginning-of-visual-line
+      :n "$" #'evil-end-of-visual-line
+      :n "^" #'evil-first-non-blank-of-visual-line)
