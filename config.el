@@ -167,3 +167,39 @@
       :n "0" #'evil-beginning-of-visual-line
       :n "$" #'evil-end-of-visual-line
       :n "^" #'evil-first-non-blank-of-visual-line)
+
+;; kotlin in md aktivieren
+(after! markdown-mode
+  (setq markdown-fontify-code-blocks-natively t)
+
+  ;; "kotlin" in ```kotlin auf kotlin-mode mappen
+  (add-to-list 'markdown-code-lang-modes '("kotlin" . kotlin-mode))
+
+  ;; optional, falls du auch ```kt benutzen willst
+  (add-to-list 'markdown-code-lang-modes '("kt" . kotlin-mode)))
+
+;; solutions config
+(setq ent/run-configs
+  (let ((base-dir "/Users/torben.unland/IdeaProjects/entscheidungen/entscheidungen-webapp")
+        (mvn "mvn -Pent-dev -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true compile exec:java -Dexec.mainClass=de.guidecom.sodalis.runtime.JettyStarterXML -Dexec.classpathScope=compile")
+        (jvm "-Dexec.jvmArgs='-Dorg.eclipse.jetty.server.Request.maxFormContentSize=10000000 -Drebel.wicket.ignore_properties=true -Drebel.spring_plugin=false -Xms1024m -Xmx1024m'"))
+    (list
+     (cons "ENT - Postgres"
+           (format "cd %s && env 'bas.db.instance=' 'bas.db.port=5433' 'bas.db.type=postgres' 'ent.db.instance=' 'ent.db.port=5432' 'ent.db.type=postgres' 'ent.imexport.enabled=true' 'file.repository.type=DATABASE' 'personenbezogene.daten.perspective.enabled=true' 'sodalis.testMode.hint.label=localhost - Postgres' %s %s"
+                   base-dir mvn jvm))
+     (cons "ENT - Postgres - Videos"
+           (format "cd %s && env 'bas.db.instance=' 'bas.db.port=5433' 'bas.db.type=postgres' 'ent.db.instance=' 'ent.db.port=5432' 'ent.db.type=postgres' 'file.repository.type=DATABASE' 'feature.videostreaming.enabled=true' 'streaming.transcoding.enabled=false' 'sodalis.testMode.hint.label=localhost - Postgres' %s %s"
+                   base-dir mvn jvm))
+     (cons "ENT - Keycloak"
+           (format "cd %s && env 'bas.db.instance=' 'bas.db.port=5433' 'bas.db.type=postgres' 'ent.db.instance=' 'ent.db.port=5432' 'ent.db.type=postgres' 'entscheidungen.api.enabled=true' 'file.repository.type=DATABASE' 'authentication.mode=oidc' 'authentication.oidc.client.id=client-gctest-sol' 'authentication.oidc.idp.issuerUri=http://localhost:8082/realms/realm-sol' 'sodalis.testMode.hint.label=localhost - Postgres' %s %s"
+                   base-dir mvn jvm)))))
+
+(defun ent/run ()
+  "Run-Konfiguration fuer entscheidungen auswaehlen und starten."
+  (interactive)
+  (let* ((name (completing-read "Run config: " (mapcar #'car ent/run-configs) nil t))
+         (cmd  (cdr (assoc name ent/run-configs))))
+    (compile cmd)))
+
+(map! :leader
+      :desc "ENT Run config" "p R" #'ent/run)
