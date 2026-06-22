@@ -52,3 +52,12 @@
 (package! nordic-night-theme)
 (package! catppuccin-theme)
 (package! busybee-theme)
+
+;; --- Java/Spring-IDE (siehe docs/) -------------------------------------------
+(package! lsp-sonarlint)   ; IntelliJ-SonarLint-aehnliche Inspections
+(package! magit-todos)     ; TODO/FIXME-Uebersicht im Magit-Status
+(package! flamegraph)      ; Flamegraphs aus folded-stacks (Profiler) im Emacs-Buffer
+
+;; Postgres-DB-Viewer (IntelliJ-Datenbank-Tool-Aequivalent), via Git installiert:
+(package! pg     :recipe (:host github :repo "emarsden/pg-el"))   ; Postgres-Wire-Protokoll (pg.el)
+(package! pgmacs :recipe (:host github :repo "emarsden/pgmacs"))  ; Tabellen-Browser/Editor

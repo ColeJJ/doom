@@ -1,0 +1,31 @@
+# EditorConfig fuer die Doom-Emacs-Konfiguration (dieses Repo).
+# Wird vom aktiven editorconfig-Modul beim Editieren angewendet.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Emacs Lisp
+[*.el]
+indent_size = 2
+
+# Markdown: harte Zeilenumbrueche (zwei Leerzeichen am Zeilenende) nicht entfernen
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = 120
+
+# XML (z.B. Formatter-Profil)
+[*.xml]
+indent_size = 2
+
+# Shell-Skripte (z.B. Git-Hooks)
+[*.sh]
+indent_size = 2
+
+[Makefile]
+indent_style = tab

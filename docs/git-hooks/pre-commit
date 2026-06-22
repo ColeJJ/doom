@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Pre-commit-Hook fuer das Projekt "entscheidungen".
+#
+# Schnelle Code-Analyse vor dem Commit: kompiliert NUR die von den gestageten
+# Dateien betroffenen Maven-Module (kein fremder Formatter, um den IntelliJ/JDT-
+# Style nicht zu zerschiessen).
+#
+# Installation (im Projekt-Repo, einmalig) -- siehe docs/git.md:
+#   mkdir -p .githooks
+#   cp ~/.config/doom/docs/git-hooks/pre-commit .githooks/pre-commit
+#   chmod +x .githooks/pre-commit
+#   git config core.hooksPath .githooks   # wird von allen Worktrees geteilt
+#
+# Ueberspringen im Einzelfall:  SKIP_MVN=1 git commit ...   bzw.  git commit --no-verify
+set -euo pipefail
+
+files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(java|kt)$' || true)
+[ -z "$files" ] && exit 0
+
+if [ "${SKIP_MVN:-0}" != "1" ]; then
+  # Modulpfade aus den Dateipfaden ableiten (alles vor /src/...) und deduplizieren:
+  mods=$(echo "$files" | sed -E 's#/src/.*##' | sort -u | paste -sd, -)
+  echo "pre-commit: kompiliere betroffene Module: $mods"
+  mvn -o -q -DskipTests -pl "$mods" -am compile \
+    || mvn -q -DskipTests -pl "$mods" -am compile
+fi

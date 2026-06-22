@@ -29,10 +29,16 @@
 ;; refresh your font settings. If Emacs still can't find your font, it likely
 ;; wasn't installed correctly. Font issues are rarely Doom issues!
 
-;; There are two ways to load a theme. Both assume the theme is installed and
-;; available. You can either set `doom-theme' or manually load a theme with the
-;; `load-theme' function. This is the default:
-(setq doom-theme 'doom-one)
+;; Theme direkt und reproduzierbar beim Start laden.
+;; Hintergrund: Nur `doom-theme' zu setzen reichte hier nicht zuverlaessig; nach
+;; `SPC h r r' war das Theme da, beim frischen Start aber nicht. Deshalb registrieren
+;; wir den lokalen Theme-Ordner explizit und laden das Theme sofort aus DOOMDIR/themes.
+;; `custom-safe-themes' verhindert Sicherheits-Prompts, falls der lokale Theme-Hash
+;; nach eigenen Anpassungen nicht mehr zum alten Eintrag in custom.el passt.
+(add-to-list 'custom-theme-load-path (expand-file-name "themes/" doom-user-dir))
+(setq custom-safe-themes t
+      doom-theme 'gruber-darker)
+(load-theme 'gruber-darker t)
 
 ;; This determines the style of line numbers in effect. If set to `nil', line
 ;; numbers are disabled. For relative line numbers, set this to `relative'.
@@ -109,8 +115,9 @@
   (add-hook 'TeX-after-compilation-finished-functions #'TeX-revert-document-buffer))
 
 ;; GOLANG
-;; vor dem Speichern formatieren
-(add-hook 'before-save-hook #'gofmt-before-save)
+;; vor dem Speichern formatieren -- NUR in Go-Dateien (sonst lief der Hook global)
+(add-hook 'go-mode-hook
+          (lambda () (add-hook 'before-save-hook #'gofmt-before-save nil t)))
 
 ;; hover fuer typen
 (after! lsp-ui
@@ -135,14 +142,13 @@
       :desc "Open in Finder"
       "o f" #'tu/open-in-finder)
 
-;; Farbe im gruber-darker theme org mode fuer H2 anpassen
-(with-eval-after-load 'gruber-darker-theme
-  (set-face-attribute 'org-level-1 nil
-                      :foreground "#97CB8F"
-                      :weight 'bold)
-  (set-face-attribute 'org-level-2 nil
-                      :foreground "#96a6c8"
-                      :weight 'bold))
+;; Farbe im gruber-darker theme fuer Org-Headlines anpassen.
+;; Wichtig: `org-level-*'-Faces existieren erst nach dem Laden von org; direkt beim
+;; Theme-Load wuerde Emacs mit "Invalid face org-level-1" abbrechen.
+(after! org
+  (custom-set-faces!
+    '(org-level-1 :foreground "#97CB8F" :weight bold)
+    '(org-level-2 :foreground "#96a6c8" :weight bold)))
 
 ;; binding for edit all occurrences
 (map! :leader
@@ -178,28 +184,45 @@
   ;; optional, falls du auch ```kt benutzen willst
   (add-to-list 'markdown-code-lang-modes '("kt" . kotlin-mode)))
 
-;; solutions config
-(setq ent/run-configs
-  (let ((base-dir "/Users/torben.unland/IdeaProjects/entscheidungen/entscheidungen-webapp")
-        (mvn "mvn -Pent-dev -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true compile exec:java -Dexec.mainClass=de.guidecom.sodalis.runtime.JettyStarterXML -Dexec.classpathScope=compile")
-        (jvm "-Dexec.jvmArgs='-Dorg.eclipse.jetty.server.Request.maxFormContentSize=10000000 -Drebel.wicket.ignore_properties=true -Drebel.spring_plugin=false -Xms1024m -Xmx1024m'"))
-    (list
-     (cons "ENT - Postgres"
-           (format "cd %s && env 'bas.db.instance=' 'bas.db.port=5433' 'bas.db.type=postgres' 'ent.db.instance=' 'ent.db.port=5432' 'ent.db.type=postgres' 'ent.imexport.enabled=true' 'file.repository.type=DATABASE' 'personenbezogene.daten.perspective.enabled=true' 'sodalis.testMode.hint.label=localhost - Postgres' %s %s"
-                   base-dir mvn jvm))
-     (cons "ENT - Postgres - Videos"
-           (format "cd %s && env 'bas.db.instance=' 'bas.db.port=5433' 'bas.db.type=postgres' 'ent.db.instance=' 'ent.db.port=5432' 'ent.db.type=postgres' 'file.repository.type=DATABASE' 'feature.videostreaming.enabled=true' 'streaming.transcoding.enabled=false' 'sodalis.testMode.hint.label=localhost - Postgres' %s %s"
-                   base-dir mvn jvm))
-     (cons "ENT - Keycloak"
-           (format "cd %s && env 'bas.db.instance=' 'bas.db.port=5433' 'bas.db.type=postgres' 'ent.db.instance=' 'ent.db.port=5432' 'ent.db.type=postgres' 'entscheidungen.api.enabled=true' 'file.repository.type=DATABASE' 'authentication.mode=oidc' 'authentication.oidc.client.id=client-gctest-sol' 'authentication.oidc.idp.issuerUri=http://localhost:8082/realms/realm-sol' 'sodalis.testMode.hint.label=localhost - Postgres' %s %s"
-                   base-dir mvn jvm)))))
+;; Such-/Auswahlfenster (vertico +childframe = vertico-posframe) NICHT springen lassen.
+;; Ursache des "Herumspringens": das Posframe passt Groesse dynamisch an die Trefferzahl
+;; an und wird dabei neu zentriert. -> feste Breite/Hoehe + kein Resizing = stabil.
+(after! vertico
+  ;; resize nil => vertico zeigt IMMER `vertico-count' Zeilen (auch mit Padding).
+  ;; Dadurch ist die Hoehe konstant (kein Springen) und die Liste scrollt/rotiert
+  ;; normal durch alle Treffer.
+  (setq vertico-resize nil
+        vertico-count 17))                    ; feste Anzahl sichtbarer Eintraege
+(after! vertico-posframe
+  ;; WICHTIG: `vertico-posframe-height' NICHT absolut setzen -- das nagelt die Hoehe
+  ;; starr fest und verhindert das Mitscrollen der Kandidatenliste. Stattdessen Hoehe
+  ;; automatisch (folgt `vertico-count', dank resize nil konstant) + min-height als
+  ;; Untergrenze gegen Schrumpfen. Breite bleibt fix gegen horizontales Springen.
+  (setq vertico-posframe-poshandler #'posframe-poshandler-frame-center  ; immer zentriert
+        vertico-posframe-width 160            ; feste Breite (Zeichen)
+        vertico-posframe-min-width 120        ; nicht schmaler werden
+        vertico-posframe-height nil           ; Hoehe automatisch (= vertico-count, stabil)
+        vertico-posframe-min-height (1+ vertico-count)))  ; Untergrenze: Prompt + Eintraege
 
-(defun ent/run ()
-  "Run-Konfiguration fuer entscheidungen auswaehlen und starten."
-  (interactive)
-  (let* ((name (completing-read "Run config: " (mapcar #'car ent/run-configs) nil t))
-         (cmd  (cdr (assoc name ent/run-configs))))
-    (compile cmd)))
+;; Projectile: Eclipse-/JDT-".project"-Dateien NICHT als Projektwurzel werten.
+;; Doom fuegt ".project" zu `projectile-project-root-files-bottom-up' hinzu. In einem
+;; Multi-Modul-Maven-Projekt hat aber JEDES Modul eine Eclipse-".project" -- dadurch
+;; wuerde "bottom-up" das tiefste Modul (z.B. entscheidungen-model) statt des Git-Roots
+;; als Projekt erkennen. Folge: `SPC s p' sucht nur im Modul, nicht im Oberprojekt.
+;; Loesung: ".project" als Marker entfernen -> die Git-Wurzel (Oberprojekt) gewinnt.
+;; Eigene Projektwurzeln lassen sich weiterhin per ".projectile"-Datei markieren.
+(after! projectile
+  (setq projectile-project-root-files-bottom-up
+        (remove ".project" projectile-project-root-files-bottom-up))
+  ;; bereits gecachte (falsche) Wurzeln verwerfen, damit der Fix sofort greift:
+  (when (and (boundp 'projectile-project-root-cache)
+             (hash-table-p projectile-project-root-cache))
+    (clrhash projectile-project-root-cache)))
 
-(map! :leader
-      :desc "ENT Run config" "p R" #'ent/run)
+;; Java/Spring-IDE-Erweiterungen (siehe docs/ und +java.el / +git.el):
+;; Die fruehere handgepflegte `ent/run`-Konfiguration wird durch den
+;; Run/Debug-Picker aus `.idea/runConfigurations` ersetzt (Single Source of Truth).
+;; Bei Classpath-Problemen mit dem Jetty-Starter steht `+idea/run-mvn' (SPC m R)
+;; als bewaehrter `mvn exec:java'-Fallback bereit.
+(load! "+java")
+(load! "+git")
