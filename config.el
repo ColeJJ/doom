@@ -37,8 +37,52 @@
 ;; nach eigenen Anpassungen nicht mehr zum alten Eintrag in custom.el passt.
 (add-to-list 'custom-theme-load-path (expand-file-name "themes/" doom-user-dir))
 (setq custom-safe-themes t
-      doom-theme 'gruber-darker)
-(load-theme 'gruber-darker t)
+      ;; Standard-Theme beim Start. Zum dauerhaften Wechsel hier auf 'rose-pine-moon
+      ;; aendern (und die load-theme-Zeile unten entsprechend) -- oder zur Laufzeit
+      ;; einfach `SPC h t' benutzen (siehe +theme/load unten).
+      doom-theme 'tj)
+(load-theme 'tj t)
+
+;; Sauberer Theme-Wechsel zur Laufzeit (auf `SPC h t').
+;; `load-theme' allein deaktiviert das alte Theme NICHT -> Face-Reste (z.B. gruber-BG)
+;; koennen unter dem neuen Theme durchscheinen. Deshalb erst alle aktiven Themes
+;; deaktivieren, dann das gewaehlte laden. Verfuegbar sind alle Themes aus
+;; `custom-theme-load-path' -- also auch das lokale `rose-pine-moon'.
+(defun +theme/load (theme)
+  "THEME sauber laden: erst alle aktiven Themes deaktivieren, dann THEME aktivieren."
+  (interactive
+   (list (intern (completing-read "Theme laden: "
+                                  (mapcar #'symbol-name (custom-available-themes))
+                                  nil t))))
+  (mapc #'disable-theme (copy-sequence custom-enabled-themes))
+  (load-theme theme t)
+  (setq doom-theme theme)
+  ;; Terminal-Frames wieder den iTerm2-Hintergrund uebernehmen lassen (s.u.):
+  (when (fboundp '+tty/inherit-terminal-background)
+    (+tty/inherit-terminal-background)))
+(map! :leader :desc "Theme wechseln (sauber)" "h t" #'+theme/load)
+
+;; --------------------------------------------------------------------------
+;; Einheitlicher Hintergrund im Terminal (et): Theme-Hintergrund weglassen
+;; --------------------------------------------------------------------------
+;; Im GUI bleibt der Theme-Hintergrund (#010611). Im Terminal (et/emacsclient -t)
+;; setzen wir den default-Hintergrund auf "unspecified-bg" -> Emacs uebermalt den
+;; Terminal-Hintergrund NICHT, sondern laesst den iTerm2-Hintergrund durchscheinen.
+;; Ergebnis: einheitliche Flaeche (auch fuer iTerm2-Transparenz/Blur), keine
+;; Kante zwischen Emacs-Bereich und iTerm2-Chrome. Setzt du iTerm2s Hintergrund
+;; auf #010611, sieht das Terminal exakt wie das GUI-Theme aus.
+(defun +tty/inherit-terminal-background (&optional frame)
+  "Laesst Terminal-Frames den iTerm2-Hintergrund uebernehmen (GUI bleibt Theme)."
+  (let ((frame (or frame (selected-frame))))
+    (unless (display-graphic-p frame)
+      (set-face-background 'default "unspecified-bg" frame)
+      ;; Zeilennummern-Spalte nicht mit eigenem BG uebermalen (sonst Streifen):
+      (when (facep 'line-number)
+        (set-face-background 'line-number "unspecified-bg" frame)))))
+(add-hook 'after-make-frame-functions #'+tty/inherit-terminal-background)
+(add-hook 'server-after-make-frame-hook #'+tty/inherit-terminal-background)
+;; auch fuer den evtl. schon bestehenden (nicht-grafischen) Frame beim Laden:
+(+tty/inherit-terminal-background)
 
 ;; This determines the style of line numbers in effect. If set to `nil', line
 ;; numbers are disabled. For relative line numbers, set this to `relative'.
@@ -169,14 +213,6 @@ Nuetzlich, wenn der Cursor auf einer Variablen steht und man in deren Typ will."
       :desc "Open in Finder"
       "o f" #'tu/open-in-finder)
 
-;; Farbe im gruber-darker theme fuer Org-Headlines anpassen.
-;; Wichtig: `org-level-*'-Faces existieren erst nach dem Laden von org; direkt beim
-;; Theme-Load wuerde Emacs mit "Invalid face org-level-1" abbrechen.
-(after! org
-  (custom-set-faces!
-    '(org-level-1 :foreground "#97CB8F" :weight bold)
-    '(org-level-2 :foreground "#96a6c8" :weight bold)))
-
 ;; binding for edit all occurrences
 (map! :leader
       :desc "Edit all occurrences"
@@ -231,6 +267,20 @@ Nuetzlich, wenn der Cursor auf einer Variablen steht und man in deren Typ will."
         vertico-posframe-height nil           ; Hoehe automatisch (= vertico-count, stabil)
         vertico-posframe-min-height (1+ vertico-count)))  ; Untergrenze: Prompt + Eintraege
 
+;; Aufraeumen: eine fruehere Session hatte diese Befehle testweise auf das
+;; vertico-buffer-Layout (Frame-Unterkante) gestellt. `add-to-list' ueberlebt aber
+;; ein `doom/reload' (SPC h r r) -- die Eintraege bleiben sonst haengen und die Suche
+;; klebt weiter unten. Darum hier explizit wieder entfernen -> zentrierte Posframe.
+(after! vertico-multiform
+  (dolist (cmd '(+java/goto-class
+                 consult-fd consult-find consult-ripgrep consult-git-grep
+                 consult-line consult-buffer consult-project-buffer
+                 +default/search-project +default/search-project-for-symbol-at-point
+                 +default/search-buffer +default/search-cwd +default/search-other-cwd
+                 +search/project-latin1
+                 find-file projectile-find-file))
+    (setq vertico-multiform-commands
+          (assq-delete-all cmd vertico-multiform-commands))))
 ;; Projectile: Eclipse-/JDT-".project"-Dateien NICHT als Projektwurzel werten.
 ;; Doom fuegt ".project" zu `projectile-project-root-files-bottom-up' hinzu. In einem
 ;; Multi-Modul-Maven-Projekt hat aber JEDES Modul eine Eclipse-".project" -- dadurch
@@ -283,10 +333,35 @@ Nuetzlich, wenn der Cursor auf einer Variablen steht und man in deren Typ will."
 ;; Klassen/Symbole projektweit suchen (IntelliJ Cmd+O "Go to Class"). Nutzt die
 ;; Workspace-Symbole von JDT.LS via consult-lsp -> tippen filtert live nach Klasse/Methode.
 (defun +lsp/goto-class ()
-  "Projektweit nach Klassen/Symbolen suchen (IntelliJ \"Go to Class\")."
+  "Gruendliche projektweite Symbolsuche via JDT.LS (findet auch innere Klassen/Methoden).
+Kann je nach Workspace-Groesse etwas dauern (LSP-Roundtrip)."
   (interactive)
   (require 'consult-lsp)
   (call-interactively #'consult-lsp-symbols))
+
+;; Schnelle, Telescope-artige Klassensuche: statt LSP-Workspace-Symbole (Roundtrip,
+;; teils langsam) werden die Klassen-DATEIEN asynchron per `fd' gelistet. In Java/Kotlin
+;; ist der Dateiname = Klassenname -> das deckt "Go to Class" praktisch komplett ab.
+;; `consult-fd' liefert dabei von Haus aus das Telescope-Gefuehl: async (sofort schnell),
+;; `:category file' -> Datei-Icons (nerd-icons), Live-Vorschau und Match-Highlight.
+(defun +java/goto-class (&optional arg)
+  "Schnelle, Telescope-artige Klassensuche (IntelliJ \"Go to Class\").
+Listet .java/.kt/.scala-Dateien im Projekt asynchron per `fd' (Dateiname = Klassenname)
+-- mit Datei-Icons, Live-Vorschau und Match-Highlight, komplett OHNE LSP-Roundtrip.
+
+Mit Praefix-Arg (\\[universal-argument]) stattdessen die gruendliche LSP-Symbolsuche
+(`+lsp/goto-class' -- findet auch innere Klassen/Methoden)."
+  (interactive "P")
+  (if arg
+      (+lsp/goto-class)
+    (require 'consult)
+    (let* ((root (or (doom-project-root) default-directory))
+           ;; fd auf Klassen-Dateien vorfiltern; die dynamischen Suchargumente aus dem
+           ;; Minibuffer haengt consult danach an -> Tippen filtert nur noch nach Namen.
+           (consult-fd-args
+            (append (if (listp consult-fd-args) consult-fd-args (list consult-fd-args))
+                    '("--type f --extension java --extension kt --extension scala"))))
+      (consult-fd root))))
 
 ;; Projektsuche fuer ISO-8859-1/Latin-1-Dateien (viele *.properties hier sind Latin-1
 ;; kodiert). ripgrep nimmt sonst UTF-8 an und findet Umlaute in Latin-1-Dateien NICHT.
@@ -301,8 +376,9 @@ ripgrep-Argumente an (deshalb hier statt eines einfachen consult-ripgrep-Wrapper
   (+vertico-file-search :args '("--encoding=iso-8859-1")))
 
 (map! :leader
-      :desc "Suche: Klasse/Symbol (LSP)" "s c" #'+lsp/goto-class
-      :desc "Suche Projekt (Latin-1)"    "s P" #'+search/project-latin1)
+      :desc "Go to Class (schnell, fd)"    "s c" #'+java/goto-class
+      :desc "Symbolsuche (LSP, gruendlich)" "s C" #'+lsp/goto-class
+      :desc "Suche Projekt (Latin-1)"      "s P" #'+search/project-latin1)
 
 ;; Java/Spring-IDE-Erweiterungen (siehe docs/ und +java.el / +git.el):
 ;; Die fruehere handgepflegte `ent/run`-Konfiguration wird durch den
@@ -311,3 +387,45 @@ ripgrep-Argumente an (deshalb hier statt eines einfachen consult-ripgrep-Wrapper
 ;; als bewaehrter `mvn exec:java'-Fallback bereit.
 (load! "+java")
 (load! "+git")
+
+
+;; refresh im docker mode
+(after! docker
+  (map! :map docker-container-mode-map
+        :n "g r" #'tabulated-list-revert))
+
+;; --------------------------------------------------------------------------
+;; Treemacs (SPC o p): Sidebar automatisch so breit wie noetig
+;; --------------------------------------------------------------------------
+;; Problem: Bei fester `treemacs-width' werden lange Datei-/Ordnernamen
+;; abgeschnitten (z.B. "annotat:", "behavio", "groupbo"). Loesung: nach dem
+;; Oeffnen und nach jedem Auf-/Zuklappen die Breite an den laengsten sichtbaren
+;; Eintrag anpassen -- begrenzt durch `+treemacs-max-width', mindestens
+;; `treemacs-width' (damit es nie zu schmal wird).
+(defvar +treemacs-max-width 70
+  "Obergrenze (in Spalten) fuer die automatische Treemacs-Breite.")
+
+(after! treemacs
+  (defun +treemacs/fit-width-to-content (&rest _)
+    "Treemacs-Fenster so breit machen wie der laengste sichtbare Eintrag.
+Begrenzt auf `+treemacs-max-width', Untergrenze `treemacs-width'. Wirkt auf das
+lokale Treemacs-Fenster -- unabhaengig davon, welches Fenster gerade fokussiert ist."
+    (let ((win (treemacs-get-local-window)))
+      (when (window-live-p win)
+        (with-selected-window win
+          (let ((longest 0))
+            (save-excursion
+              (goto-char (point-min))
+              (while (not (eobp))
+                (setq longest (max longest (- (line-end-position)
+                                              (line-beginning-position))))
+                (forward-line 1)))
+            ;; +3 Puffer fuer Icon-/Rand-Breite; Icons zaehlen im Buffer nur als 1 Zeichen.
+            (treemacs--set-width
+             (max treemacs-width (min +treemacs-max-width (+ longest 3)))))))))
+
+  ;; Initial beim Oeffnen (SPC o p) und nach jedem Expandieren/Kollabieren neu messen:
+  (advice-add '+treemacs/toggle    :after #'+treemacs/fit-width-to-content)
+  (advice-add 'treemacs-TAB-action  :after #'+treemacs/fit-width-to-content)
+  (advice-add 'treemacs-RET-action  :after #'+treemacs/fit-width-to-content)
+  (advice-add 'treemacs-toggle-node :after #'+treemacs/fit-width-to-content))

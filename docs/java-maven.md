@@ -5,6 +5,7 @@
 - Code-Completion (`corfu`), Quick-Docs/Hover (`lsp-ui-doc`, in deiner config: `Q`)
 - Sprung zur Definition: `gd` bzw. `SPC c d`; Typ-Definition `SPC c D`
 - Implementierungen (Interface -> Impl): `SPC c i`
+- Super-/Interface-Methode (Impl-Methode -> Interface-Methode): `SPC m i` (IntelliJ "Go to Super Method") -- Cursor auf die Methode setzen; bei mehreren Supertypen erscheint eine Auswahl, bei genau einem wird direkt gesprungen
 - Referenzen / "Find Usages": `SPC c f`
 - Rename-Refactoring: `SPC c r`; weitere Code-Actions: `SPC c a`
 - Struktur/Outline: `SPC s i` (consult-imenu), `M-x lsp-treemacs-symbols`

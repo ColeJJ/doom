@@ -76,7 +76,15 @@ e () {
     emacsclient -c -n -a '' "$@"
   fi
 }
-alias et="emacsclient -t -a ''"          # Datei im Terminal (TUI)
+# `et` ohne Argument -> Doom-Startfenster (Dashboard) im AKTUELLEN Terminal (TUI);
+# `et datei ...`      -> oeffnet die Datei(en) im Terminal (TUI).
+et () {
+  if [ $# -eq 0 ]; then
+    emacsclient -t -a '' --eval '(+doom-dashboard/open (selected-frame))'
+  else
+    emacsclient -t -a '' "$@"
+  fi
+}
 export EDITOR="emacsclient -t -a ''"     # git commit etc. im Terminal-Client
 export VISUAL="$EDITOR"
 # Daemon einmalig starten, falls keiner laeuft (mit voller Shell-Umgebung):
@@ -90,7 +98,8 @@ Oeffnen:
 ```sh
 e                 # neuer GUI-Frame im Doom-Startfenster (Dashboard) -- wie gewohnt
 e  datei.java     # Datei im GUI-Frame, nicht blockierend
-et datei.org      # Terminal/TUI
+et                # Doom-Startfenster (Dashboard) im AKTUELLEN Terminal (TUI)
+et datei.org      # Datei im Terminal/TUI
 ```
 
 Das `-a ''` startet notfalls automatisch einen Daemon, falls keiner laeuft. Das
@@ -133,6 +142,63 @@ In [`config.el`](../config.el) / [`+java.el`](../+java.el):
 Beim **ersten** Oeffnen einer `.java`-Datei pro Daemon-Sitzung verbindet sich
 JDT.LS und indiziert das Projekt -- das ist einmalig. Jede weitere Datei ist dann
 schnell. Solange der Daemon laeuft, bleibt der Server warm.
+
+## Terminal sieht blau/falsch aus (iTerm2) -> True-Color
+
+Symptom: Im GUI ist das Theme dunkel, im Terminal (`et`) wird der Hintergrund
+**grellblau**. Ursache: `gruber-darker` nutzt als Hintergrund ein sehr dunkles
+Marineblau (`#010611`). Ohne 24-bit-Farben rechnet das Terminal das auf die
+naechste 256-Farbe herunter -- und weil der Blauanteil dominiert, landet es bei
+einem sichtbaren Blau (Farbe 17) statt bei Fast-Schwarz.
+
+Fix: **True-Color aktivieren.** Emacs 29+ schaltet 24-bit ein, wenn die Umgebungs-
+variable `COLORTERM=truecolor` gesetzt ist (siehe `etc/NEWS.29`). In `~/.zshrc`
+steht daher **vor** dem Daemon-Autostart:
+
+```sh
+export COLORTERM=truecolor
+```
+
+Wichtig: Der **Daemon** muss diese Variable in seiner Umgebung haben (Emacs liest
+`COLORTERM` aus der Prozess-Umgebung, nicht pro Client-Frame). Deshalb steht der
+`export` vor dem Daemon-Start. Nach der Aenderung einmal:
+
+```sh
+emacsclient -e '(kill-emacs)'   # alten Daemon beenden
+# neues iTerm2-Fenster oeffnen -> Daemon startet mit COLORTERM=truecolor neu
+et                              # jetzt dunkel wie im GUI
+```
+
+Pruefen im laufenden Daemon: `emacsclient -e '(getenv "COLORTERM")'` => `"truecolor"`.
+iTerm2 kann 24-bit nativ darstellen; eine spezielle Terminfo (`xterm-direct`) ist
+damit nicht noetig.
+
+## Icons im Terminal (nerd-icons) fehlen (`?`-Kaestchen)
+
+Doom nutzt **nerd-icons**; ohne passende Nerd-Font erscheinen nur `?`-Kaestchen
+(im GUI und im Terminal). Fonts installieren:
+
+```sh
+brew install --cask font-symbols-only-nerd-font   # fuer GUI-Emacs (nerd-icons)
+brew install --cask font-jetbrains-mono-nerd-font # fuer iTerm2 (Terminal-Icons)
+```
+
+- **GUI-Emacs**: findet "Symbols Nerd Font Mono" automatisch (ggf. Emacs/Daemon neu
+  starten). Falls noetig: `M-x nerd-icons-install-fonts`.
+- **iTerm2 (Terminal)**: die Icons rendern nur, wenn iTerm2 eine Nerd-Font nutzt.
+  *Settings -> Profiles -> Text -> Font* auf **"JetBrainsMono Nerd Font"** stellen.
+
+## Einheitlicher Hintergrund im Terminal (et)
+
+Im GUI ist der Theme-Hintergrund `#010611`. Damit das Terminal nicht "zweifarbig"
+wirkt (Emacs-Flaeche vs. iTerm2-Rand), uebernehmen **Terminal-Frames** den iTerm2-
+Hintergrund: In [`config.el`](../config.el) setzt `+tty/inherit-terminal-background`
+den `default`-Hintergrund fuer nicht-grafische Frames auf `unspecified-bg` (GUI
+bleibt unveraendert). So ist die Flaeche einheitlich (auch bei iTerm2-Transparenz).
+
+Fuer den **exakten** Theme-Look im Terminal zusaetzlich iTerm2s Hintergrund auf
+`#010611` setzen: *Settings -> Profiles -> Colors -> Background* -> Hex `010611`.
+Dann ist Terminal == GUI.
 
 ## Nach einem Emacs-Update (`brew upgrade emacs-plus@30`)
 

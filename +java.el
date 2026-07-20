@@ -346,17 +346,51 @@ Laeuft `mvn clean install -DskipTests' ueber den kompletten Reactor im Projekt-R
                                (directory-file-name (+idea--project-root))
                                wd))))
 
+(defvar +idea-extra-classpath-dirs '("src/test/resources/conf")
+  "Zusaetzliche Verzeichnisse (relativ zum Arbeitsverzeichnis der Run-Config), die
+beim dap-Start (SPC m r) VORNE auf den Classpath gelegt werden.
+
+Hintergrund: Das Maven-Profil `ent-dev' (entscheidungen-webapp/pom.xml) haengt
+`src/test/resources/conf' als <resource> an und legt dessen Inhalt so auf den
+Classpath-ROOT -- dort liegt `ent.application.properties' mit `ent.db.server',
+`ent.db.database' usw. IntelliJ hat dieses Profil angehakt; JDT.LS/dap kennen es
+NICHT. Ohne diese Dateien bricht Spring mit \"Could not resolve placeholder
+'ent.db.server'\" ab. Darum wird das Verzeichnis hier explizit ergaenzt.")
+
+(defun +idea--resolve-classpath (main module)
+  "Von JDT.LS aufgeloesten Classpath (Vector) fuer MAIN/MODULE holen, sonst nil."
+  (ignore-errors
+    (cl-second
+     (with-lsp-workspace (lsp-find-workspace 'jdtls)
+       (lsp-send-execute-command "vscode.java.resolveClasspath"
+                                 (vector main module))))))
+
 (defun +idea--launch (name cfg debug)                    ; via dap-java starten (debug=nil -> reiner Run)
   (require 'dap-java)
   ;; dap-java braucht einen laufenden JDT.LS (fuer resolveClasspath/-MainClass):
   (unless (and (fboundp 'lsp-workspaces) (lsp-workspaces))
     (user-error "Kein JDT.LS in diesem Buffer aktiv -- erst eine .java-Datei oeffnen und JDT.LS importieren lassen (Modeline/M-x lsp), oder den Jetty-Weg nehmen: SPC m R (mvn exec:java)"))
-  (let ((tmpl (list :type "java" :request "launch" :name name
-                    :mainClass   (plist-get cfg :main)
-                    :projectName (plist-get cfg :module)
-                    :vmArgs      (or (plist-get cfg :vmargs) "")
-                    :cwd         (+idea--expand-wd cfg)
-                    :env         (plist-get cfg :envs))))   ; alist (KEY . VALUE), von dap unterstuetzt
+  (let* ((wd (+idea--expand-wd cfg))
+         ;; ent-dev-conf (o.ae.) VOR den JDT-Classpath haengen, damit
+         ;; ent.application.properties (ent.db.server ...) im Classpath-Root liegt:
+         (extra (when wd
+                  (seq-filter #'file-directory-p
+                              (mapcar (lambda (d) (expand-file-name d wd))
+                                      +idea-extra-classpath-dirs))))
+         (tmpl (list :type "java" :request "launch" :name name
+                     :mainClass   (plist-get cfg :main)
+                     :projectName (plist-get cfg :module)
+                     :vmArgs      (or (plist-get cfg :vmargs) "")
+                     :cwd         wd
+                     :env         (plist-get cfg :envs))))   ; alist (KEY . VALUE), von dap unterstuetzt
+    ;; Nur wenn Extra-Dirs existieren UND JDT den Basis-Classpath liefert, setzen wir
+    ;; :classPaths selbst (extra + aufgeloest). Sonst laesst dap-java ihn wie gehabt
+    ;; selbst aufloesen (dann ohne Extra-Dirs -> Fallback SPC m R nutzen).
+    (when extra
+      (when-let ((resolved (+idea--resolve-classpath (plist-get cfg :main)
+                                                     (plist-get cfg :module))))
+        (setq tmpl (plist-put tmpl :classPaths
+                              (vconcat (apply #'vector extra) resolved)))))
     (dap-debug (if debug tmpl (append tmpl (list :noDebug t))))))
 
 (defun +idea--pick-config ()                             ; Picker: Name -> Plist
@@ -367,13 +401,22 @@ Laeuft `mvn clean install -DskipTests' ueber den kompletten Reactor im Projekt-R
     (let ((name (completing-read "Run-Config: " (mapcar #'car configs) nil t)))
       (cons name (cdr (assoc name configs))))))
 
+(defvar +idea--last-run nil
+  "Plist des zuletzt gestarteten Laufs -- fuer `+idea/rerun'.
+Form: (:kind dap|mvn :name STRING :cfg PLIST :debug BOOL).")
+
+(defun +idea--remember-run (kind name cfg debug)
+  "Letzten Lauf fuer den Rerun merken."
+  (setq +idea--last-run (list :kind kind :name name :cfg cfg :debug debug)))
+
 ;;;###autoload
 (defun +idea/run ()
   "IntelliJ-Run-Config auswaehlen und ueber dap-java starten (Run oder Debug)."
   (interactive)
   (let* ((pick (+idea--pick-config))
-         (mode (completing-read "Aktion: " '("Run" "Debug") nil t)))
-    (+idea--launch (car pick) (cdr pick) (string= mode "Debug"))))
+         (debug (string= "Debug" (completing-read "Aktion: " '("Run" "Debug") nil t))))
+    (+idea--remember-run 'dap (car pick) (cdr pick) debug)
+    (+idea--launch (car pick) (cdr pick) debug)))
 
 ;; --- Fallback: Start ueber 'mvn exec:java' (zuverlaessig fuer den Jetty-Starter) ---
 ;; Spiegelt die bewaehrte alte ent/run-Logik: Profil ent-dev, SSL-Flags, Env als
@@ -412,11 +455,32 @@ Phase 2: im Modul-Arbeitsverzeichnis ueber exec:java starten (Env + MAVEN_OPTS =
                           (shell-quote-argument root) +idea--mvn-ssl-flags
                           (shell-quote-argument module))))
          ;; Phase 2: im Arbeitsverzeichnis ueber exec:java starten.
+         ;; WICHTIG - Profil `ent-dev' liefert die DB-Defaults:
+         ;; Das Maven-Profil `ent-dev' (entscheidungen-webapp/pom.xml) haengt
+         ;; `src/test/resources/conf' als <resource> an -> dessen Inhalt (u.a.
+         ;; `ent.application.properties' mit `ent.db.server=localhost') landet im
+         ;; Classpath-ROOT von target/classes. Ohne dieses Profil bricht Spring mit
+         ;; "Could not resolve placeholder 'ent.db.server'" ab. `compile' fuehrt
+         ;; `process-resources' aus und kopiert die conf entsprechend; classpathScope=compile
+         ;; (NICHT test -- sonst landen Test-Abhaengigkeiten wie h2/junit auf dem
+         ;; Laufzeit-Classpath, was IntelliJ ebenfalls nicht tut).
          (run (format "cd %s && env %s MAVEN_OPTS=%s mvn -Pent-dev %s compile exec:java -Dexec.mainClass=%s -Dexec.classpathScope=compile"
                       (shell-quote-argument wd) envs (shell-quote-argument vm)
                       +idea--mvn-ssl-flags
                       (shell-quote-argument (plist-get cfg :main)))))
     (concat build run)))
+
+(defun +idea--mvn-launch (cfg debug)
+  "Run-Config CFG ueber 'mvn exec:java' im richtigen Arbeitsverzeichnis starten."
+  (let ((default-directory (file-name-as-directory
+                            (or (+idea--expand-wd cfg) (+idea--project-root)))))
+    (unless (file-directory-p default-directory)
+      (user-error "Arbeitsverzeichnis existiert nicht: %s" default-directory))
+    (when +idea-build-dependencies
+      (message "Baue zuerst abhaengige Module (mvn -am install) -- das kann beim ersten Mal dauern ..."))
+    (compile (+idea--mvn-command cfg debug))
+    (when debug
+      (message "JDWP auf :5005 -- sobald Jetty laeuft, mit `SPC m a' (+idea/attach) verbinden."))))
 
 ;;;###autoload
 (defun +idea/run-mvn ()
@@ -427,24 +491,222 @@ Bei Debug wird JDWP auf Port 5005 geoeffnet -- danach mit `+idea/attach' verbind
   (interactive)
   (let* ((pick (+idea--pick-config))
          (cfg  (cdr pick))
-         (debug (string= "Debug" (completing-read "Aktion: " '("Run" "Debug") nil t)))
-         ;; Arbeitsverzeichnis aufloesen (absolut, ~ expandiert) und pruefen:
-         (default-directory (file-name-as-directory
-                             (or (+idea--expand-wd cfg) (+idea--project-root)))))
-    (unless (file-directory-p default-directory)
-      (user-error "Arbeitsverzeichnis existiert nicht: %s" default-directory))
-    (when +idea-build-dependencies
-      (message "Baue zuerst abhaengige Module (mvn -am install) -- das kann beim ersten Mal dauern ..."))
-    (compile (+idea--mvn-command cfg debug))
-    (when debug
-      (message "JDWP auf :5005 -- sobald Jetty laeuft, mit `SPC m a' (+idea/attach) verbinden."))))
+         (debug (string= "Debug" (completing-read "Aktion: " '("Run" "Debug") nil t))))
+    (+idea--remember-run 'mvn (car pick) cfg debug)
+    (+idea--mvn-launch cfg debug)))
+
+(defun +idea--descendant-pids (pid)
+  "Liste ALLER Nachfahren-PIDs von PID (rekursiv, tiefste zuerst)."
+  (let ((kids (ignore-errors
+                (mapcar #'string-to-number
+                        (split-string
+                         (shell-command-to-string (format "pgrep -P %d" pid))
+                         nil t)))))
+    (append (apply #'append (mapcar #'+idea--descendant-pids kids)) kids)))
+
+(defun +idea--kill-process-tree (proc)
+  "PROC und ALLE Nachfahren (Shell -> mvn -> java/Jetty) hart per SIGKILL beenden.
+Noetig, damit gebundene Ports (HTTP bzw. JDWP :5005) sofort frei werden -- sonst
+scheitert ein direkt folgender Rerun mit \"address already in use\", weil `mvn'/
+`java' als Waisenkind weiterlaeuft (SIGINT an die Shell reicht NICHT)."
+  (when (process-live-p proc)
+    (let* ((pid  (process-id proc))
+           (pids (when pid (append (+idea--descendant-pids pid) (list pid)))))
+      (dolist (pp pids)
+        (ignore-errors (signal-process pp 'KILL))))))
+
+;; Re-`compile' (Rerun/SPC m R) soll einen noch laufenden Prozess ohne Rueckfrage
+;; beenden, statt "A compilation process is running; kill it?" zu fragen:
+(setq compilation-always-kill t)
+
+;;;###autoload
+(defun +idea/stop-run ()
+  "Laufenden Run/Debug SOFORT stoppen -- egal aus welchem Buffer heraus.
+dap-Sessions werden STATUS-basiert erkannt (`dap--session-running') -- `program-proc'
+ist bei Java-Launch nil, weil die JVM vom Debug-Adapter (nicht von Emacs) gestartet
+wird. Beendet wird NICHT-blockierend: `dap-disconnect' ist async und weist den Adapter
+an, die JVM zu terminieren; danach wird der Status sofort auf `terminated' gesetzt und
+die Session verzoegert aufgeraeumt -- so wird das SYNCHRONE `dap-request' aus
+`dap-delete-session' (das Emacs bei haengendem Jetty einfriert) vermieden. Zusaetzlich
+werden laufende Compilation-/`mvn exec:java'-Prozesse (SPC m R) beendet."
+  (interactive)
+  (let ((n 0))
+    ;; 1. dap-Sessions (SPC m r): Status-basiert erkennen und nicht-blockierend beenden.
+    (when (and (featurep 'dap-mode) (fboundp 'dap--get-sessions))
+      (dolist (s (dap--get-sessions))
+        (when (ignore-errors (dap--session-running s))
+          (setq n (1+ n))
+          ;; async! terminiert die JVM ueber den Adapter, ohne auf Antwort zu warten:
+          (ignore-errors (dap-disconnect s))
+          ;; falls dap den Prozess doch selbst gestartet hat: hart killen.
+          (when-let ((proc (ignore-errors (dap--debug-session-program-proc s))))
+            (when (process-live-p proc) (ignore-errors (kill-process proc))))
+          ;; Status sofort auf terminated -> spaeteres Aufraeumen nimmt den schnellen Pfad:
+          (ignore-errors (setf (dap--debug-session-state s) 'terminated))))
+      ;; Aufraeumen (Session aus Liste, Output-Buffer schliessen) verzoegert & nicht-blockierend:
+      (run-at-time
+       0.5 nil
+       (lambda ()
+         (when (fboundp 'dap--get-sessions)
+           (dolist (s (dap--get-sessions))
+             (unless (ignore-errors (dap--session-running s))
+               (ignore-errors (dap-delete-session s))))))))
+    ;; 2. Compilation-/exec:java-Prozesse (SPC m R): den GANZEN Prozessbaum killen.
+    ;; `kill-compilation' schickt nur SIGINT an die Shell -- das Kind `mvn'/`java'
+    ;; (exec:java laeuft IN dieser JVM, Jetty haengt hier) ueberlebt sonst als Waise
+    ;; und haelt den Port weiter, sodass der Rerun scheitert.
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (and (derived-mode-p 'compilation-mode)
+                   (get-buffer-process buf))
+          (ignore-errors (+idea--kill-process-tree (get-buffer-process buf)))
+          (setq n (1+ n)))))
+    (message (if (> n 0)
+                 (format "Run gestoppt (%d Prozess/e beendet)." n)
+               "Kein laufender Run gefunden (dap-Session/Compilation)."))))
+
+;;;###autoload
+(defun +idea/rerun ()
+  "Letzten Lauf (SPC m r / SPC m R) ohne erneute Auswahl neu starten.
+Stoppt vorher -- wie IntelliJs Rerun -- einen noch laufenden Lauf und startet dann
+dieselbe Run-Config mit derselben Aktion (Run/Debug bzw. mvn exec:java) neu."
+  (interactive)
+  (unless +idea--last-run
+    (user-error "Noch kein Run gestartet -- erst SPC m r (dap) oder SPC m R (mvn)"))
+  (let ((kind  (plist-get +idea--last-run :kind))
+        (name  (plist-get +idea--last-run :name))
+        (cfg   (plist-get +idea--last-run :cfg))
+        (debug (plist-get +idea--last-run :debug)))
+    (+idea/stop-run)
+    ;; kurze Pause, damit Prozess/Port frei werden, dann denselben Lauf neu starten:
+    (run-at-time
+     1.5 nil
+     (lambda ()
+       (message "Rerun: %s (%s)" name
+                (if (eq kind 'mvn) "mvn exec" (if debug "Debug" "Run")))
+       (pcase kind
+         ('dap (+idea--launch name cfg debug))
+         ('mvn (+idea--mvn-launch cfg debug)))))))
+
+(defvar +java--hotswap-pending nil
+  "Wenn non-nil, nutzt der naechste `hotcodereplace'-Handler das Event fuer einen HotSwap.
+Wird von `+java/hotswap' gesetzt -- so laeuft HotSwap nur auf Zuruf, nicht bei jedem Save.")
+
+(defun +java--redefine-now (session)
+  "Geaenderte Klassen SOFORT per `redefineClasses' in SESSION laden.
+Setzt voraus, dass JDT.LS die Quellen bereits (beim Speichern) kompiliert hat.
+
+WICHTIG: Der dap-Response-Callback bekommt die KOMPLETTE Nachricht; die Nutzdaten
+liegen unter `body' -> `changedClasses'. (Das falsch verschachtelte Auslesen auf
+oberster Ebene -- wie in lsp-java -- ergibt immer `nil' und meldet faelschlich
+\"keine Klassen\".)"
+  (dap--send-message
+   (dap--make-request "redefineClasses")
+   (lambda (resp)
+     (let* ((ok      (and (hash-table-p resp) (gethash "success" resp)))
+            (body    (and (hash-table-p resp) (gethash "body" resp)))
+            (classes (and (hash-table-p body) (gethash "changedClasses" body)))
+            (errmsg  (and (hash-table-p resp) (gethash "message" resp))))
+       (cond
+        ((and classes (> (length classes) 0))
+         (message "HotSwap OK: %d Klasse(n) neu geladen: %s"
+                  (length classes)
+                  (mapconcat #'identity (append classes nil) ", ")))
+        ((not ok)
+         (message "HotSwap fehlgeschlagen: %s" (or errmsg "unbekannter Fehler")))
+        (t
+         (message "HotSwap: keine geaenderten Klassen -- JDT hat seit dem letzten Lauf/HotSwap nichts neu kompiliert (oder strukturelle Aenderung -> Neustart noetig).")))))
+   session))
 
 (after! dap-mode
   (require 'dap-java)
   ;; "Remote JVM Debug"-Aequivalent (an laufende JVM mit JDWP :5005 andocken):
   (dap-register-debug-template
    "ENT attach :5005"
-   (list :type "java" :request "attach" :hostName "localhost" :port 5005)))
+   (list :type "java" :request "attach" :hostName "localhost" :port 5005))
+
+  ;; HotSwap NICHT bei jedem Save: dap-java wuerde sonst bei JEDEM Speichern die
+  ;; geaenderten Klassen in die JVM schieben (`dap-java-hot-reload' Default `always').
+  ;; Das ist zu viel Gerechne, wenn man erst mehrere Changes machen will. Darum:
+  ;;   - `dap-java-hot-reload' auf `never' -> Speichern allein schiebt NICHTS mehr.
+  ;;   - HotSwap nur auf Zuruf ueber `+java/hotswap' (SPC m h): das setzt
+  ;;     `+java--hotswap-pending' und speichert; JDT.LS kompiliert inkrementell und
+  ;;     feuert dann `hotcodereplace' -> erst DANN werden die Klassen geladen.
+  (setq dap-java-hot-reload 'never)
+  (cl-defmethod dap-handle-event ((_event (eql hotcodereplace)) session _params)
+    (when (or (eq dap-java-hot-reload 'always) +java--hotswap-pending)
+      (setq +java--hotswap-pending nil)
+      (+java--redefine-now session))))
+
+;;; --------------------------------------------------------------------------
+;;; Debug-Toolbar (dap-ui-controls) NUR bei Halt am Breakpoint einblenden
+;;; --------------------------------------------------------------------------
+;; Standardmaessig zeigt dap die schwebende Steuerungs-Leiste (Step/Continue/Stop)
+;; die GANZE Debug-Session ueber. Gewuenscht ist IntelliJ-Verhalten: Die Leiste
+;; erscheint nur, wenn die Ausfuehrung an einem Breakpoint STEHT, und verschwindet
+;; beim Weiterlaufen bzw. beim Session-Ende wieder.
+
+(after! dap-mode
+  ;; `controls' aus der Auto-Konfiguration nehmen -> nicht mehr automatisch beim
+  ;; Session-Start aktiv (locals/breakpoints/expressions/tooltip bleiben erhalten):
+  (setq dap-auto-configure-features
+        (delq 'controls dap-auto-configure-features)))
+
+(after! dap-ui
+  (defun +dap/controls-on (&rest _)
+    "Debug-Toolbar einblenden (bei Halt am Breakpoint/Step)."
+    (dap-ui-controls-mode 1))
+  (defun +dap/controls-off (&rest _)
+    "Debug-Toolbar ausblenden (beim Weiterlaufen/Session-Ende)."
+    (dap-ui-controls-mode -1))
+  ;; Hooks werden mit dem debug-session-Objekt aufgerufen -> Argument ignorieren:
+  (add-hook 'dap-stopped-hook    #'+dap/controls-on)   ; Breakpoint erreicht / Step fertig -> zeigen
+  (add-hook 'dap-continue-hook   #'+dap/controls-off)  ; weiter laufen -> verstecken
+  (add-hook 'dap-terminated-hook #'+dap/controls-off)) ; Session zu Ende -> verstecken
+
+
+;;;###autoload
+(defun +java/hotswap ()
+  "IntelliJ-HotSwap auf Zuruf: geaenderte Klassen in die LAUFENDE Debug-Session laden.
+KEIN Rebuild, KEIN Neustart -- nur die geaenderten .class-Dateien werden per JDWP in
+die laufende JVM geschoben. Laeuft NICHT bei jedem Save (`dap-java-hot-reload' = never),
+sondern nur ueber diesen Befehl (SPC m h / SPC r h) -- so kann man erst mehrere Changes
+machen und dann einmal uebernehmen.
+
+Ablauf: geaenderte Java-Buffer speichern -> JDT.LS kompiliert inkrementell und feuert
+`hotcodereplace' -> dann werden die Klassen geladen. Ist nichts offen-geaendert, wird
+direkt der seit dem letzten HotSwap geaenderte Stand geladen.
+
+Grenzen (wie in IntelliJ): HotSwap ersetzt nur Methoden-Koerper. Neue/entfernte
+Methoden oder Felder, geaenderte Signaturen oder die Klassenhierarchie brauchen einen
+Neustart (SPC m e)."
+  (interactive)
+  (require 'dap-java)
+  (let ((session (dap--cur-session)))
+    (unless (and session (dap--session-running session))
+      (user-error "Kein laufender Debug -- HotSwap braucht eine aktive Debug-Session (SPC m r -> Debug)"))
+    (let ((dirty (seq-filter
+                  (lambda (b)
+                    (with-current-buffer b
+                      (and (buffer-file-name) (buffer-modified-p)
+                           (derived-mode-p 'java-mode 'java-ts-mode))))
+                  (buffer-list))))
+      (if (null dirty)
+          ;; nichts offen-geaendert -> direkt laden (JDT hat bei frueheren Saves kompiliert):
+          (+java--redefine-now session)
+        ;; sonst: pending setzen + speichern; das hotcodereplace-Event loest den Push aus.
+        (setq +java--hotswap-pending t)
+        (dolist (b dirty) (with-current-buffer b (save-buffer)))
+        (message "HotSwap: %d Datei(en) gespeichert -- JDT kompiliert, Klassen werden geladen ..."
+                 (length dirty))
+        ;; Fallback, falls kein hotcodereplace-Event kommt: nach kurzer Zeit direkt pushen.
+        (run-at-time
+         1.5 nil
+         (lambda ()
+           (when +java--hotswap-pending
+             (setq +java--hotswap-pending nil)
+             (when-let ((s (dap--cur-session)))
+               (when (dap--session-running s) (+java--redefine-now s))))))))))
 
 ;;;###autoload
 (defun +idea/attach ()
@@ -560,8 +822,12 @@ EVENT ist z.B. \"cpu\" (Methodenlaufzeit) oder \"alloc\" (Memory/Allokation)."
            :desc "Maven-Goal (frei)"       "t" #'+mvn/execute-goal              ; IntelliJ "Execute Maven Goal"
            :desc "Run-Config (Run/Debug)"  "r" #'+idea/run                       ; Picker (dap-java)
            :desc "Run-Config (mvn exec)"   "R" #'+idea/run-mvn                   ; Picker (Fallback, Jetty)
+           :desc "Run stoppen"             "k" #'+idea/stop-run                  ; dap-Session/Compilation beenden
+           :desc "Rerun (letzter Lauf)"    "e" #'+idea/rerun                     ; erneut starten (stop+start)
            :desc "Debugger attach :5005"   "a" #'+idea/attach                    ; an laufende JVM andocken
-           :desc "Interface <-> Impl"      "I" #'+java/toggle-impl               ; Service <-> ServiceImpl
+           :desc "HotSwap (Klassen laden)" "h" #'+java/hotswap                   ; IntelliJ HotSwap, ohne Rebuild/Neustart
+           :desc "Interface <-> Impl"      "I" #'+java/toggle-impl               ; Service <-> ServiceImpl (Datei)
+           :desc "Super-Methode (Interface)" "i" #'lsp-java-open-super-implementation ; Impl-Methode -> Interface/Super-Methode (IntelliJ "Go to Super Method")
            :desc "Format (JDT/IntelliJ)"   "=" #'lsp-format-buffer               ; Formatierung nach Profil
            :desc "Imports ordnen"          "o" #'lsp-java-organize-imports
            :desc "Maven neu importieren"   "u" #'lsp-java-update-project-configuration
@@ -605,9 +871,14 @@ EVENT ist z.B. \"cpu\" (Methodenlaufzeit) oder \"alloc\" (Memory/Allokation)."
     (+mvn-bind-localleader! conf-javaprop-mode-map))) ; *.properties
 (after! nxml-mode (+mvn-bind-localleader! nxml-mode-map))  ; pom.xml / *.xml
 
-;; Globale Schnellzugriffe (wie ein "Run"-Button bzw. DB-Tool):
+;; Globale Schnellzugriffe (wie ein "Run"-/"Stop"-Button bzw. DB-Tool). Global,
+;; damit "Run stoppen" auch im Ausgabe-Fenster (dap-out/*compilation*) greift, wo
+;; der Java-Localleader nicht gilt.
 (map! :leader
       :desc "Run-Config starten" "r r" #'+idea/run                            ; Run/Debug-Picker
+      :desc "Run stoppen"        "r k" #'+idea/stop-run                        ; dap-Session/Compilation beenden
+      :desc "Rerun (letzter Lauf)" "r e" #'+idea/rerun                          ; erneut starten (stop+start)
+      :desc "HotSwap (Klassen laden)" "r h" #'+java/hotswap                       ; IntelliJ HotSwap (Debug)
       :desc "DB: Postgres oeffnen" "o d" #'+pg/open)                          ; pgmacs-Profil-Picker
 
 (provide '+java)

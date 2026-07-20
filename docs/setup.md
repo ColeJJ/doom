@@ -104,3 +104,23 @@ Stellschrauben gesetzt (siehe `config.el` und `+java.el`):
   `lsp-java-boot-enabled` auf `t` setzen und `boot-ls` aus `lsp-disabled-clients`
   entfernen; ausserdem muss der Boot-Server-Jar unter
   `<lsp-java-server-install-dir>/boot-server/` vorhanden sein.
+
+## Themes wechseln
+
+Lokale Themes liegen in `themes/` (auf `custom-theme-load-path` registriert):
+
+- `gruber-darker` -- Standard (siehe `config.el`).
+- `rose-pine-moon` -- Rose-Pine-"Moon"-Variante, angelehnt an ThePrimeagens
+  neovim-Setup (`disable_background`, `styles.italic = false`), d.h. **keine
+  Kursivschrift** und im Terminal transparenter Hintergrund (via
+  `+tty/inherit-terminal-background`); im GUI der Moon-Hintergrund `#232136`.
+- `tj` -- Nachbau von TJ DeVries' colorbuddy-Theme: dunkler Hintergrund `#0F111A`,
+  **gelbe Funktionen**, violette Keywords/Typen (kursiv), gruene Strings, rote
+  Zahlen, orange Konstanten, kursive Kommentare und eine auffaellige **blaue
+  Statusline**.
+
+Zur Laufzeit wechseln: **`SPC h t`** (`+theme/load`) -- deaktiviert erst das aktive
+Theme und laedt dann sauber das gewaehlte (verhindert Face-Reste des alten Themes).
+
+Dauerhaft als Standard setzen: in `config.el` `doom-theme` und die `load-theme`-Zeile
+auf `'rose-pine-moon` aendern.

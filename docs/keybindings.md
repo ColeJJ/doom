@@ -11,8 +11,12 @@
 | `t`   | `+mvn/execute-goal` | **Maven-Goal frei eingeben** (IntelliJ "Execute Maven Goal") |
 | `r`   | `+idea/run` | Run-Config-Picker (dap-java), Run/Debug |
 | `R`   | `+idea/run-mvn` | Run-Config via `mvn exec:java` (Jetty-Fallback) |
+| `k`   | `+idea/stop-run` | Laufenden Run stoppen (dap-Session **oder** mvn-Compilation) -- sofort, nicht blockierend |
+| `e`   | `+idea/rerun` | **Rerun**: letzten Lauf neu starten (stoppt vorher, wie IntelliJs Rerun) |
 | `a`   | `+idea/attach` | An laufende JVM andocken (JDWP :5005) |
-| `I`   | `+java/toggle-impl` | Interface <-> Impl wechseln |
+| `h`   | `+java/hotswap` | **HotSwap**: geaenderte Klassen in die laufende Debug-Session laden (kein Rebuild/Neustart) |
+| `I`   | `+java/toggle-impl` | Interface <-> Impl wechseln (Datei-Ebene) |
+| `i`   | `lsp-java-open-super-implementation` | **Zur Super-/Interface-Methode springen** (IntelliJ "Go to Super Method") |
 | `=`   | `lsp-format-buffer` | Formatieren (JDT/IntelliJ-Style) |
 | `o`   | `lsp-java-organize-imports` | Imports ordnen |
 | `u`   | `lsp-java-update-project-configuration` | Maven neu importieren |
@@ -67,8 +71,12 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 | Taste | Befehl | Beschreibung |
 |-------|--------|--------------|
 | `r r` | `+idea/run` | Run-Config starten (Run/Debug) |
+| `r k` | `+idea/stop-run` | Laufenden Run stoppen (dap-Session **oder** mvn-Compilation) -- aus jedem Buffer |
+| `r e` | `+idea/rerun` | **Rerun**: letzten Lauf neu starten (stop+start) -- aus jedem Buffer |
+| `r h` | `+java/hotswap` | **HotSwap**: geaenderte Klassen in laufenden Debug laden -- aus jedem Buffer |
 | `o d` | `+pg/open` | DB-Viewer (Postgres/pgmacs) |
 | `o f` | `tu/open-in-finder` | Verzeichnis im Finder oeffnen |
+| `o p` | `+treemacs/toggle` | Projekt-Sidebar (Treemacs) -- Breite passt sich automatisch dem laengsten sichtbaren Eintrag an (bis `+treemacs-max-width`, Default 70) |
 | `g w` | `magit-worktree` | Git-Worktrees verwalten |
 
 ## LSP/Navigation (Doom-Standard, `SPC c`)
@@ -85,7 +93,8 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 | `SPC c a` | Code-Actions (inkl. Override/Implement) |
 | `SPC c j` | Klasse/Symbol projektweit (`consult-lsp-symbols`) |
 | `SPC s i` | Struktur/Outline (imenu) |
-| `SPC s c` | **Klasse/Symbol projektweit** (IntelliJ "Go to Class", `consult-lsp-symbols`) |
+| `SPC s c` | **Go to Class -- schnell** (Telescope-artig: `fd` ueber .java/.kt, Icons, Preview, KEIN LSP) |
+| `SPC s C` | **Symbolsuche gruendlich** (LSP-Workspace-Symbole, findet auch innere Klassen/Methoden -- langsamer) |
 
 > **Direkt springen statt Peek:** `gd`/`SPC c d` zeigt durch das Modul-Flag
 > `(lsp +peek)` eine Peek-Liste. Wenn du **sofort in die Klasse/das Interface/Enum**

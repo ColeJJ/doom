@@ -309,6 +309,10 @@
    `(neo-dir-link-face ((t (:foreground ,gruber-darker-niagara))))
 
    ;; Org Mode
+   ;; Headline-Farben (frueher als globales custom-set-faces! in config.el; jetzt hier
+   ;; im Theme, damit ein Theme-Wechsel z.B. zu rose-pine sauber die Farben wechselt).
+   `(org-level-1 ((t (:foreground ,gruber-darker-green :weight bold))))
+   `(org-level-2 ((t (:foreground ,gruber-darker-niagara :weight bold))))
    `(org-agenda-structure ((t (:foreground ,gruber-darker-niagara))))
    `(org-column ((t (:background ,gruber-darker-bg-1))))
    `(org-column-title ((t (:background ,gruber-darker-bg-1 :underline t :weight bold))))
