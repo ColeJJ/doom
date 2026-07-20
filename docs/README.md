@@ -23,6 +23,7 @@ Java, Spring, Maven und Kotlin (Projekt `entscheidungen`) IntelliJ-aehnlich mach
 6. [profiler.md](profiler.md) -- Profiler (async-profiler) + Flamegraphs
 7. [git.md](git.md) -- Magit, GitLab/Forge, Worktrees, pre-commit-Hook
 8. [keybindings.md](keybindings.md) -- vollstaendiges Shortcut-Cheat-Sheet
+9. [performance.md](performance.md) -- native-comp-Build + Daemon (schnell wie neovim)
 
 ## Schnellstart
 

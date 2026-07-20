@@ -24,7 +24,9 @@ Nach Aenderungen an `init.el`/`packages.el`:
 ```
 
 Danach Emacs neu starten. Die installierten Pakete:
-`lsp-sonarlint`, `magit-todos`, `flamegraph`, `pg`, `pgmacs` (pg/pgmacs via `package-vc` aus Git).
+`lsp-sonarlint`, `magit-todos`, `flamegraph`, `magit-delta`, `pg`, `pgmacs`
+(pg/pgmacs via `package-vc` aus Git). `magit-delta` braucht zusaetzlich das CLI
+`delta` (`brew install git-delta`).
 
 ## Erststart
 
@@ -49,11 +51,36 @@ machine localhost port 5432 login <user> password <geheim>
 machine localhost port 5433 login <user> password <geheim>
 ```
 
+## Performance ("wird beim Nutzen immer langsamer")
+
+> **Der groesste Hebel** (Emacs deutlich schneller als IntelliJ, wie neovim) ist ein
+> **native-comp-Emacs-Build + Daemon**. Das ist in einer eigenen Anleitung beschrieben:
+> **[performance.md](performance.md)** (emacs-plus@30, Wrapper-Stolperstein, `e`/`et`
+> via emacsclient). Ergebnis hier: Datei-Oeffnen von ~2 s auf ~0,02 s.
+
+Zusaetzlich sind gegen die progressive Verlangsamung in einer Sitzung mehrere
+Stellschrauben gesetzt (siehe `config.el` und `+java.el`):
+
+- **Font-Cache nicht kompaktieren** (`inhibit-compacting-font-caches t`): der mit
+  Abstand haeufigste Grund fuer "immer langsamer" bei Icon-Fonts (corfu/vertico
+  `+icons`). Dazu `fast-but-imprecise-scrolling`, `redisplay-skip-fontification-on-input`,
+  `jit-lock-defer-time 0`, `idle-update-delay 1.0`.
+- **GC entspannt** (`gcmh-high-cons-threshold` = 256 MB): weniger GC-Pausen waehrend
+  der Arbeit.
+- **LSP weniger eifrig**: `lsp-idle-delay 1.0`, `lsp-enable-symbol-highlighting nil`
+  (kein Neu-Highlight bei jeder Cursorbewegung), Breadcrumb/Modeline-Code-Actions/
+  On-Type-Format aus, `lsp-log-io nil`, Datei-Watcher-Schwelle gesenkt + mehr Ordner
+  ignoriert (`.git`, `build`, `out`, `dist`, `bin`, `logs` ...).
+- **Code-Lens** (Referenz-/Implementierungszaehler ueber Methoden) ist der groesste
+  verbleibende Dauer-Kostenfaktor in grossen Projekten. Bei Bedarf pro Buffer mit
+  `SPC m l` (`lsp-lens-mode`) an-/ausschalten.
+
 ## Troubleshooting
 
 - **Hoher Speicher / langsam**: `lsp-java-vmargs` (Heap, Standard `-Xmx4G`) und
   `lsp-file-watch-threshold` in [`+java.el`](../+java.el) anpassen. `target/`
-  wird bereits von der Dateiueberwachung ausgeschlossen.
+  wird bereits von der Dateiueberwachung ausgeschlossen. Siehe auch Abschnitt
+  **Performance** oben.
 - **Kotlin-LSP startet nicht**: pruefen, ob `kotlin-language-server` im `PATH` ist.
 - **pgmacs fehlt**: `doom sync` erneut ausfuehren (Installation via `package-vc`).
 - **Run-Config-Picker leer**: es werden nur Configs vom Typ `Application` aus

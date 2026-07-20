@@ -36,11 +36,38 @@
         lsp-java-save-actions-organize-imports t))      ; Imports beim Speichern ordnen
 
 (after! lsp-mode
-  ;; Performance bei vielen Dateien; target/.idea nicht ueberwachen:
-  (setq lsp-file-watch-threshold 100000
-        lsp-idle-delay 0.5)
-  (dolist (re '("[/\\\\]target\\'" "[/\\\\]\\.idea\\'" "[/\\\\]node_modules\\'"))
+  ;; ---- Performance (grosses Reactor-Projekt; "wird beim Nutzen immer langsamer") ----
+  ;; Hintergrund: Die Verlangsamung kommt v.a. von (a) staendigen LSP-Neuberechnungen
+  ;; bei jeder Cursorbewegung/jedem Scrollen und (b) zu vielen Datei-Watchern.
+  (setq lsp-idle-delay 1.0                       ; seltener neu rechnen (Diagnostics/Lens/Doc)
+        lsp-log-io nil                           ; KEIN I/O-Logging (riesige Buffer = langsam)
+        lsp-enable-symbol-highlighting nil       ; nicht bei jeder Cursorbewegung neu highlighten
+        lsp-enable-on-type-formatting nil        ; nicht waehrend des Tippens umformatieren
+        lsp-enable-text-document-color nil       ; kein Farb-Overlay fuer Hex/CSS-Farben
+        lsp-headerline-breadcrumb-enable nil     ; Breadcrumb-Leiste spart Redraw-Aufwand
+        lsp-modeline-code-actions-enable nil     ; keine staendige Code-Action-Abfrage in der Modeline
+        lsp-modeline-workspace-status-enable nil
+        lsp-keep-workspace-alive nil             ; Server beenden, wenn letzter Java-Buffer zu ist
+        lsp-signature-render-documentation nil   ; Signatur ohne langes Doc-Rendering
+        ;; Watcher: 100000 hiess "ueberwache fast alles" -> dauerhafte CPU-Last bei grossen
+        ;; Reactors. Schwelle senken + mehr Build-/Tool-Ordner ignorieren:
+        lsp-file-watch-threshold 8000)
+  (dolist (re '("[/\\\\]target\\'" "[/\\\\]\\.idea\\'" "[/\\\\]node_modules\\'"
+                "[/\\\\]\\.git\\'" "[/\\\\]\\.settings\\'" "[/\\\\]bin\\'"
+                "[/\\\\]build\\'" "[/\\\\]out\\'" "[/\\\\]dist\\'" "[/\\\\]logs\\'"))
     (add-to-list 'lsp-file-watch-ignored-directories re)))
+
+(after! lsp-ui
+  ;; Sideline bleibt AN fuer Diagnostics (zeigt z.B. "unused import"-Warnungen inline,
+  ;; siehe Item Git-Diff), aber die teuren Teile (Hover/Code-Actions) aus + nur bei
+  ;; Zeilenwechsel statt bei jeder Cursorbewegung aktualisieren -> spuerbar fluessiger.
+  (setq lsp-ui-doc-delay 0.5
+        lsp-ui-sideline-enable t
+        lsp-ui-sideline-show-diagnostics t
+        lsp-ui-sideline-show-hover nil
+        lsp-ui-sideline-show-code-actions nil
+        lsp-ui-sideline-update-mode 'line
+        lsp-ui-sideline-delay 0.3))
 
 (setq read-process-output-max (* 4 1024 1024))          ; groessere LSP-Antworten zulassen
 
@@ -166,8 +193,21 @@
 ;;; 3. Maven-Tooling (Transient-Menue)
 ;;; --------------------------------------------------------------------------
 
-(defun +mvn--root ()                                     ; Reactor-Wurzel (oberstes pom.xml)
-  (or (locate-dominating-file default-directory "pom.xml") (doom-project-root)))
+(defun +mvn--root ()
+  "Reactor-Wurzel = das OBERSTE pom.xml in der Verzeichniskette (nicht das naechste).
+WICHTIG: `locate-dominating-file' liefert nur das *naechste* pom.xml -- in einem
+Multi-Modul-Projekt also das Modul-pom (z.B. entscheidungen-webapp). Baut man von dort,
+wird das Modul ISOLIERT gegen veraltete ~/.m2-JARs der Geschwister kompiliert -> Fehler
+wie \"Symbol nicht gefunden\" oder nicht-exhaustive Switches, obwohl IntelliJ durchlaeuft.
+IntelliJ baut immer aus dem Reactor-Root, damit alle Module aus dem Quellcode kommen.
+Darum hier nach oben durchlaufen, bis kein hoeheres pom.xml mehr existiert."
+  (let ((dir default-directory) (root nil) hit)
+    (while (and dir (setq hit (locate-dominating-file dir "pom.xml")))
+      (setq root hit)
+      (let ((parent (file-name-directory (directory-file-name hit))))
+        ;; nil, sobald wir die Dateisystemwurzel erreichen -> Schleife endet sauber:
+        (setq dir (unless (equal parent hit) parent))))
+    (or root (doom-project-root) default-directory)))
 
 (defun +mvn--module ()                                   ; Modul der aktuellen Datei (rel. zur Wurzel)
   (when-let* ((f (buffer-file-name))
@@ -525,6 +565,7 @@ EVENT ist z.B. \"cpu\" (Methodenlaufzeit) oder \"alloc\" (Memory/Allokation)."
            :desc "Format (JDT/IntelliJ)"   "=" #'lsp-format-buffer               ; Formatierung nach Profil
            :desc "Imports ordnen"          "o" #'lsp-java-organize-imports
            :desc "Maven neu importieren"   "u" #'lsp-java-update-project-configuration
+           :desc "Code-Lens an/aus"        "l" #'lsp-lens-mode                   ; Referenz-Zaehler bei Bedarf
            ;; Tests jetzt unter "T" (Shift-t), da "t" das freie Maven-Goal ist:
            (:prefix ("T" . "Test")
             :desc "Test (Klasse/Methode)" "t" #'+java/run-test
@@ -544,6 +585,25 @@ EVENT ist z.B. \"cpu\" (Methodenlaufzeit) oder \"alloc\" (Memory/Allokation)."
 
 (after! cc-mode      (+java-bind-localleader! java-mode-map))     ; Fallback (Grammar fehlt)
 (after! java-ts-mode (+java-bind-localleader! java-ts-mode-map))  ; Standard mit +tree-sitter
+
+;; Maven-Befehle (SPC m ...) auch ausserhalb von Java-Buffern verfuegbar machen.
+;; Problem: SPC m ist Doom-Localleader (modusabhaengig) und war nur in Java-Maps belegt.
+;; Folge: In .properties-/pom.xml-Dateien war "SPC m undefined". Hier ein schlankes
+;; Maven-Localleader-Set fuer Properties (conf-*-mode) und XML/pom (nxml-mode).
+(defmacro +mvn-bind-localleader! (keymap)
+  "Legt ein schlankes Maven-Localleader-Set (SPC m ...) in KEYMAP an."
+  `(map! :map ,keymap
+         :localleader
+         :desc "Maven-Menue"           "m" #'+mvn/menu
+         :desc "Rebuild Project"       "b" #'+mvn/rebuild-project
+         :desc "Maven-Goal (frei)"     "t" #'+mvn/execute-goal
+         :desc "Maven neu importieren" "u" #'lsp-java-update-project-configuration))
+
+(after! conf-mode
+  (+mvn-bind-localleader! conf-mode-map)            ; *.conf u.ae.
+  (when (boundp 'conf-javaprop-mode-map)
+    (+mvn-bind-localleader! conf-javaprop-mode-map))) ; *.properties
+(after! nxml-mode (+mvn-bind-localleader! nxml-mode-map))  ; pom.xml / *.xml
 
 ;; Globale Schnellzugriffe (wie ein "Run"-Button bzw. DB-Tool):
 (map! :leader

@@ -129,6 +129,33 @@
   (map! :map lsp-mode-map
         :n "Q" #'lsp-ui-doc-show))
 
+;; --------------------------------------------------------------------------
+;; Direkt zur Definition springen (Klasse/Interface/Enum) -- ohne Peek/Liste
+;; --------------------------------------------------------------------------
+;; Hintergrund: Durch das Modul-Flag `(lsp +peek)' belegt Doom den Definitions-
+;; Handler mit `lsp-ui-peek-find-definitions' -- d.h. `gd' / `SPC c d' oeffnet ein
+;; Peek-Fenster mit einer Liste statt direkt zu springen. Diese Befehle rufen den
+;; LSP-Sprung direkt auf (ueber xref) und landen sofort in der Quelle.
+(defun +java/jump-to-definition ()
+  "Direkt zur Definition des Symbols unter dem Cursor springen (Klasse/Interface/
+Enum/Methode) -- ohne Peek-/Referenzliste. Nutzt LSP, sonst xref als Fallback."
+  (interactive)
+  (if (bound-and-true-p lsp-mode)
+      (lsp-find-definition)
+    (call-interactively #'xref-find-definitions)))
+
+(defun +java/jump-to-type-definition ()
+  "Direkt zum TYP (Klasse/Interface/Enum) des Symbols unter dem Cursor springen.
+Nuetzlich, wenn der Cursor auf einer Variablen steht und man in deren Typ will."
+  (interactive)
+  (if (bound-and-true-p lsp-mode)
+      (lsp-find-type-definition)
+    (user-error "Typ-Definition braucht einen aktiven LSP-Server")))
+
+(map! :leader
+      :desc "Definition: direkt springen" "c g" #'+java/jump-to-definition
+      :desc "Typ-Definition: direkt springen" "c G" #'+java/jump-to-type-definition)
+
 
 ;; Open file in finder (macos)
 (defun tu/open-in-finder ()
@@ -218,6 +245,64 @@
   (when (and (boundp 'projectile-project-root-cache)
              (hash-table-p projectile-project-root-cache))
     (clrhash projectile-project-root-cache)))
+
+;; --------------------------------------------------------------------------
+;; Performance: "Doom wird beim Nutzen immer langsamer"
+;; --------------------------------------------------------------------------
+;; Die progressive Verlangsamung in einer Sitzung kommt typischerweise von
+;; (1) dem Kompaktieren der Font-Caches (besonders mit Icon-Fonts wie hier durch
+;;     corfu/vertico +icons -- DER haeufigste Grund fuer "immer langsamer") und
+;; (2) zu haeufiger/aggressiver Garbage Collection.
+(setq inhibit-compacting-font-caches t            ; Font-Cache nicht staendig kompaktieren (grosser Gewinn)
+      fast-but-imprecise-scrolling t              ; fluessigeres Scrollen in grossen Dateien
+      redisplay-skip-fontification-on-input t     ; beim Tippen nicht zwischendurch fontifizieren
+      idle-update-delay 1.0                        ; UI-Elemente seltener aktualisieren
+      jit-lock-defer-time 0)                       ; Fontification waehrend Eingabe aufschieben
+
+;; GC fuer lange Sitzungen entspannen: gcmh sammelt im Leerlauf; eine hoehere Schwelle
+;; reduziert die Anzahl der GC-Pausen waehrend der aktiven Arbeit.
+(after! gcmh
+  (setq gcmh-high-cons-threshold (* 256 1024 1024)))  ; 256 MB statt Default
+
+;; ---- native-compilation (nur mit native-comp-Build, z.B. emacs-plus@30) ----
+;; DER groesste Performance-Faktor: Elisp wird zu nativem Maschinencode kompiliert
+;; (statt nur byte-compiled) -> Org/LSP/Redisplay 2-4x schneller. Diese Einstellungen
+;; greifen nur, wenn Emacs mit native-comp gebaut ist; sonst sind sie einfach wirkungslos.
+(when (and (fboundp 'native-comp-available-p) (native-comp-available-p))
+  ;; Warnungen/Fehler der (einmaligen) Hintergrund-Kompilierung nicht als *Warnings*-
+  ;; Buffer aufpoppen lassen -- sie sind fast immer harmlos und stoeren nur:
+  (setq native-comp-async-report-warnings-errors 'silent
+        native-comp-jit-compilation t              ; im Hintergrund JIT-kompilieren
+        ;; mehr parallele Kompilier-Jobs = schneller durch den einmaligen Erstlauf:
+        native-comp-async-jobs-number (max 1 (/ (num-processors) 2))))
+
+;; --------------------------------------------------------------------------
+;; Suche: Klassensuche (IntelliJ "Go to Class") + Latin-1-faehige Projektsuche
+;; --------------------------------------------------------------------------
+
+;; Klassen/Symbole projektweit suchen (IntelliJ Cmd+O "Go to Class"). Nutzt die
+;; Workspace-Symbole von JDT.LS via consult-lsp -> tippen filtert live nach Klasse/Methode.
+(defun +lsp/goto-class ()
+  "Projektweit nach Klassen/Symbolen suchen (IntelliJ \"Go to Class\")."
+  (interactive)
+  (require 'consult-lsp)
+  (call-interactively #'consult-lsp-symbols))
+
+;; Projektsuche fuer ISO-8859-1/Latin-1-Dateien (viele *.properties hier sind Latin-1
+;; kodiert). ripgrep nimmt sonst UTF-8 an und findet Umlaute in Latin-1-Dateien NICHT.
+;; Diese Variante liest die Dateien als Latin-1 -> Umlaute in *.properties werden gefunden.
+;; (Die normale `SPC s p' bleibt UTF-8, passend fuer Java/XML-Quellen mit Umlauten.)
+(defun +search/project-latin1 ()
+  "Wie `SPC s p', liest die Dateien aber als ISO-8859-1 (fuer Latin-1-*.properties).
+Nutzt Dooms `+vertico-file-search' und haengt `--encoding=iso-8859-1' an die
+ripgrep-Argumente an (deshalb hier statt eines einfachen consult-ripgrep-Wrappers --
+`+vertico-file-search' baut `consult-ripgrep-args' sonst intern komplett neu)."
+  (interactive)
+  (+vertico-file-search :args '("--encoding=iso-8859-1")))
+
+(map! :leader
+      :desc "Suche: Klasse/Symbol (LSP)" "s c" #'+lsp/goto-class
+      :desc "Suche Projekt (Latin-1)"    "s P" #'+search/project-latin1)
 
 ;; Java/Spring-IDE-Erweiterungen (siehe docs/ und +java.el / +git.el):
 ;; Die fruehere handgepflegte `ent/run`-Konfiguration wird durch den

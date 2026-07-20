@@ -6,6 +6,30 @@
 - Blame: `SPC g B`, Time-Machine: `SPC g t`, Datei im Browser: `SPC g o`
 - Diff in der Fringe (diff-hl/vc-gutter) ist aktiv.
 
+## Diff-Darstellung wie in IntelliJ
+
+- **Syntax-Highlighting / Theme-Farben im Diff:** ueber `magit-delta` (leitet die
+  Diffs durch das CLI-Tool [`delta`](https://github.com/dandavison/delta)). Statt nur
+  rot/gruen wird der Code mit Sprach-Syntax eingefaerbt. Installiert via
+  `brew install git-delta`; in [`+git.el`](../+git.el) aktiviert (nur wenn `delta`
+  im PATH ist). Dunkles Syntax-Theme wird automatisch passend zum Hintergrund gewaehlt.
+- **Wort-genaues Diff:** `magit-diff-refine-hunk 'all` hebt die geaenderten Stellen
+  innerhalb einer Zeile hervor (wie IntelliJ).
+
+### Warnungen vor dem Commit (z.B. unused imports)
+
+Magit zeigt **keine** Lint-Marker direkt im Diff (das ist eine IntelliJ-Commit-Dialog-
+Funktion ohne 1:1-Pendant). Stattdessen mehrgleisig abgesichert:
+
+1. **Im Buffer sichtbar:** JDT.LS/flycheck markieren Warnungen (unused imports,
+   ungenutzte Variablen ...) direkt im Code -- inline am Zeilenende (`lsp-ui-sideline`,
+   bleibt fuer Diagnostics an) und in der Fringe. Gesamtliste: `SPC c x`
+   (`flycheck-list-errors`) bzw. `M-x lsp-treemacs-errors-list`.
+2. **Automatisch beim Speichern:** `lsp-java-save-actions-organize-imports` entfernt
+   ungenutzte Imports beim Speichern -- so landen sie gar nicht erst im Commit.
+3. **Pre-Commit-Hook:** kompiliert die betroffenen Module (siehe unten) und stoppt
+   den Commit bei Build-Fehlern.
+
 ## GitLab (Forge) -- self-hosted
 
 `forge` ist aktiv (`(magit +forge)`) und kennt `gitlab.guidecom.local`

@@ -34,7 +34,28 @@ Transient-Menue mit Flags und Goals (laeuft im `compile`-Buffer):
 - `u` Maven neu importieren (LSP)
 
 Das Modul wird automatisch aus dem Pfad der aktuellen Datei bestimmt (naechstes
-`pom.xml`), die Reactor-Wurzel aus dem obersten `pom.xml`.
+`pom.xml`), die Reactor-Wurzel aus dem **obersten** `pom.xml`.
+
+### Reactor-Root vs. Modul (wichtig bei "Symbol nicht gefunden")
+
+`+mvn--root` laeuft die Verzeichniskette nach oben bis zum **obersten** `pom.xml`
+(= Reactor-Root, z.B. `entscheidungen`), nicht nur bis zum naechsten Modul-`pom.xml`
+(z.B. `entscheidungen-webapp`). Das ist genau das Verhalten von IntelliJ.
+
+Hintergrund: Wuerde man Maven nur im Modul (`entscheidungen-webapp`) starten, baut
+Maven dieses Modul **isoliert** und zieht seine Geschwister (model/service) aus
+`~/.m2` -- also aus ggf. **veralteten JARs**. Folge sind Fehler, die in IntelliJ
+nicht auftreten, z.B.:
+
+- `Symbol nicht gefunden: Methode ...Service...` (Methode existiert nur im
+  aktuellen Quellcode, nicht im installierten JAR),
+- `Der Switch-Ausdruck deckt nicht alle ... Werte ab` (Enum im JAR weicht vom
+  Quellcode ab).
+
+Weil `c`/`C`/`compile`/`clean install` etc. jetzt vom Reactor-Root **ohne** `-pl`
+laufen, werden model/service/webapp gemeinsam aus dem Quellcode kompiliert -- wie in
+IntelliJ. Nur wirklich ein einzelnes Modul bauen willst du mit `mc`/`mi` bzw.
+`C-u SPC m t` (`-pl <modul> -am`).
 
 ## Rebuild Project (`SPC m b`)
 

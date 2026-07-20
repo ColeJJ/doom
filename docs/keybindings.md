@@ -16,6 +16,7 @@
 | `=`   | `lsp-format-buffer` | Formatieren (JDT/IntelliJ-Style) |
 | `o`   | `lsp-java-organize-imports` | Imports ordnen |
 | `u`   | `lsp-java-update-project-configuration` | Maven neu importieren |
+| `l`   | `lsp-lens-mode` | Code-Lens (Referenz-/Implementierungszaehler) an/aus |
 | `g o` | `lsp-java-generate-overrides` | Override/Implement: eine Methode waehlen -> sofort overridden |
 | `g g` | `lsp-java-generate-getters-and-setters` | Getter & Setter |
 | `g s` | `lsp-java-generate-to-string` | `toString()` |
@@ -46,6 +47,10 @@ haeufigen Goals. Getippter Text laeuft 1:1 als `mvn <goal>` im Reactor-Root, z.B
 Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 (`-pl <modul> -am`). Auch im Maven-Menue unter `SPC m m` -> `e` erreichbar.
 
+> **Maven auch ausserhalb von Java-Buffern:** Das schlanke Maven-Set (`m` Menue,
+> `b` Rebuild, `t` Goal, `u` Reimport) ist auch in `*.properties` (conf-mode) und in
+> `pom.xml`/XML (nxml-mode) verfuegbar -- also `SPC m m` etc. funktioniert dort jetzt.
+
 ## Maven-Menue (`SPC m m`)
 
 | Taste | Aktion |
@@ -70,13 +75,22 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 
 | Taste | Beschreibung |
 |-------|--------------|
-| `g d` / `SPC c d` | zur Definition |
-| `SPC c D` | zur Typ-Definition |
-| `SPC c i` | zu Implementierungen |
-| `SPC c f` | Referenzen (Find Usages) |
+| `SPC c g` | **Direkt zur Definition springen** (Klasse/Interface/Enum/Methode, OHNE Peek-Liste) |
+| `SPC c G` | **Direkt zur Typ-Definition springen** (Typ einer Variablen: Klasse/Interface/Enum) |
+| `g d` / `SPC c d` | zur Definition -- oeffnet wegen `+peek` ein **Peek-Fenster mit Liste** |
+| `SPC c t` | zur Typ-Definition (Doom-Standard) |
+| `SPC c i` | zu Implementierungen (Peek) |
+| `SPC c D` | Referenzen (Find Usages) |
 | `SPC c r` | Rename |
 | `SPC c a` | Code-Actions (inkl. Override/Implement) |
+| `SPC c j` | Klasse/Symbol projektweit (`consult-lsp-symbols`) |
 | `SPC s i` | Struktur/Outline (imenu) |
+| `SPC s c` | **Klasse/Symbol projektweit** (IntelliJ "Go to Class", `consult-lsp-symbols`) |
+
+> **Direkt springen statt Peek:** `gd`/`SPC c d` zeigt durch das Modul-Flag
+> `(lsp +peek)` eine Peek-Liste. Wenn du **sofort in die Klasse/das Interface/Enum**
+> willst, nimm `SPC c g` (bzw. `SPC c G` fuer den Typ einer Variablen). Diese rufen
+> den LSP-Sprung direkt auf (via xref) und landen ohne Umweg in der Quelle.
 
 ## Suche im Projekt (`SPC s p`, consult-ripgrep)
 
@@ -94,6 +108,10 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
     (alles nach ` -- ` sind zusaetzliche rg-Argumente).
 - **Filtern statt suchen:** Text nach `#` filtert die bereits gefundenen
   Treffer (z.B. `tun#Service` -> rg sucht `tun`, dann Filter `Service`).
+- **Latin-1-Dateien (`*.properties`) durchsuchen:** Viele `*.properties` hier sind
+  ISO-8859-1 kodiert. ripgrep nimmt sonst UTF-8 an und findet **Umlaute** in diesen
+  Dateien NICHT. Dafuer gibt es `SPC s P` (Shift-P) -- identisch zu `SPC s p`, liest
+  die Dateien aber als Latin-1. (`SPC s p` bleibt UTF-8 fuer Java/XML mit Umlauten.)
 
 ## Git (`SPC g`)
 

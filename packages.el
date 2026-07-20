@@ -57,6 +57,7 @@
 (package! lsp-sonarlint)   ; IntelliJ-SonarLint-aehnliche Inspections
 (package! magit-todos)     ; TODO/FIXME-Uebersicht im Magit-Status
 (package! flamegraph)      ; Flamegraphs aus folded-stacks (Profiler) im Emacs-Buffer
+(package! magit-delta)     ; Syntax-Highlighting/Theme-Farben im Magit-Diff (braucht CLI "delta")
 
 ;; Postgres-DB-Viewer (IntelliJ-Datenbank-Tool-Aequivalent), via Git installiert:
 (package! pg     :recipe (:host github :repo "emarsden/pg-el"))   ; Postgres-Wire-Protokoll (pg.el)
