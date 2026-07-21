@@ -91,10 +91,14 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 | `SPC c D` | Referenzen (Find Usages) |
 | `SPC c r` | Rename |
 | `SPC c a` | Code-Actions (inkl. Override/Implement) |
-| `SPC c j` | Klasse/Symbol projektweit (`consult-lsp-symbols`) |
+| `SPC c f` | **Format nach IntelliJ-Profil** (`+format/intellij`): Region falls aktiv, sonst Buffer -- Java/Kotlin via JDT-Profil, sonst apheleia-Fallback |
+| `SPC c F` | **Format buffer/region** (`+format/region-or-buffer`, Dooms apheleia-Default) |
+| `SPC c j` | **Zur Definition** (wie `SPC c d`, `+lookup/definition`) |
+| `SPC c J` | **Referenzen/Find Usages** (wie `SPC c D`, `+lookup/references`) |
 | `SPC s i` | Struktur/Outline (imenu) |
 | `SPC s c` | **Go to Class -- schnell** (Telescope-artig: `fd` ueber .java/.kt, Icons, Preview, KEIN LSP) |
 | `SPC s C` | **Symbolsuche gruendlich** (LSP-Workspace-Symbole, findet auch innere Klassen/Methoden -- langsamer) |
+| `SPC s a` | **Klasse inkl. Dependencies** (JDT.LS `java/searchSymbols`, auch Klassen aus pom-JARs/JDK -- oeffnet dekompiliert via `jdt://`) |
 
 > **Direkt springen statt Peek:** `gd`/`SPC c d` zeigt durch das Modul-Flag
 > `(lsp +peek)` eine Peek-Liste. Wenn du **sofort in die Klasse/das Interface/Enum**

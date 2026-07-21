@@ -7,7 +7,9 @@ Ziel: dieselbe Formatierung wie in IntelliJ (Schema `gcIntellijCodeStyle`).
 JDT.LS unterstuetzt fuer Java **kein** `.editorconfig`, sondern ein
 Eclipse-Formatter-XML. Daher wurde dein IntelliJ-Schema in das Profil
 [`formatter/gc-eclipse-format.xml`](../formatter/gc-eclipse-format.xml)
-uebersetzt und in [`+java.el`](../+java.el) verdrahtet:
+uebersetzt und in [`+java.el`](../+java.el) verdrahtet. Das originale
+IntelliJ-Schema liegt als Referenz unter
+[`formatter/gcIntellijCodeStyle.xml`](../formatter/gcIntellijCodeStyle.xml):
 
 ```elisp
 (setq lsp-java-format-settings-url   ".../formatter/gc-eclipse-format.xml"
@@ -25,8 +27,13 @@ Uebernommene Kernregeln (aus `gcIntellijCodeStyle`):
 
 ## Formatieren
 
-- Buffer formatieren: `SPC m =` (`lsp-format-buffer`, JDT-Formatter)
-- Region: `M-x lsp-format-region`
+- `SPC c f` -> **Format nach IntelliJ-Profil** (`+format/intellij`): Region
+  falls aktiv, sonst der ganze Buffer. Fuer Java/Kotlin ueber den JDT-Formatter
+  mit dem Profil oben; in Nicht-LSP-Buffern Fallback auf `+format/region-or-buffer`.
+- `SPC c F` -> **Format buffer/region** (`+format/region-or-buffer`, Dooms
+  apheleia-Default -- z.B. fuer JSON/YAML/Shell/... ohne LSP-Profil).
+- `SPC m =` -> `lsp-format-buffer` (JDT-Formatter, wie `SPC c f` fuer den Buffer)
+- Region direkt: `M-x lsp-format-region`
 
 Java/Kotlin werden bewusst **nicht** ueber `apheleia` formatiert (sonst
 Google-Style-Konflikt). `apheleia` bleibt fuer andere Sprachen aktiv.

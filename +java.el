@@ -188,6 +188,34 @@
   (dolist (m '(java-mode java-ts-mode kotlin-mode kotlin-ts-mode))
     (setf (alist-get m apheleia-mode-alist nil 'remove) nil)))
 
+;; Formatieren nach dem IntelliJ-Profil, gebunden auf SPC c f (siehe map! unten).
+;; Hinweis: Der Eclipse-JDT-Formatter kann IntelliJs Code-Style-XML NICHT direkt
+;; lesen. Deshalb liegt das Schema als Eclipse-Profil unter
+;; `formatter/gc-eclipse-format.xml' (aus `formatter/gcIntellijCodeStyle.xml'
+;; abgeleitet) und wird oben via `lsp-java-format-settings-url' aktiviert.
+;;;###autoload
+(defun +format/intellij ()
+  "Nach dem IntelliJ-Schema (gcIntellijCodeStyle) formatieren.
+Region falls aktiv, sonst der ganze Buffer. Fuer Java/Kotlin laeuft das ueber den
+JDT-Formatter mit dem in `lsp-java-format-settings-url' hinterlegten Eclipse-Profil
+(aus deinem IntelliJ-Schema abgeleitet). In Nicht-LSP-Buffern faellt der Befehl auf
+Dooms `+format/region-or-buffer' (apheleia) zurueck, sodass SPC c f ueberall geht."
+  (interactive)
+  (cond
+   ((and (bound-and-true-p lsp-mode) (use-region-p)
+         (lsp-feature? "textDocument/rangeFormatting"))
+    (lsp-format-region (region-beginning) (region-end)))
+   ((and (bound-and-true-p lsp-mode)
+         (lsp-feature? "textDocument/formatting"))
+    (lsp-format-buffer))
+   (t (call-interactively #'+format/region-or-buffer))))
+
+;; SPC c f = IntelliJ-Formatierung (JDT-Profil), SPC c F = generisches
+;; Format-Buffer/Region (Dooms apheleia-Default).
+(map! :leader
+      :desc "Format (IntelliJ-Profil)" "c f" #'+format/intellij
+      :desc "Format buffer/region"     "c F" #'+format/region-or-buffer)
+
 
 ;;; --------------------------------------------------------------------------
 ;;; 3. Maven-Tooling (Transient-Menue)

@@ -9,6 +9,10 @@
 - Referenzen / "Find Usages": `SPC c f`
 - Rename-Refactoring: `SPC c r`; weitere Code-Actions: `SPC c a`
 - Struktur/Outline: `SPC s i` (consult-imenu), `M-x lsp-treemacs-symbols`
+- Klassensuche:
+  - `SPC s c` = **schnell, projektlokal** (Dateisuche via `fd` ueber .java/.kt, Icons/Preview, kein LSP)
+  - `SPC s C` = **gruendlich** (LSP-Workspace-Symbole, auch innere Klassen/Methoden)
+  - `SPC s a` = **inkl. Dependencies** (wie IntelliJ Cmd+O ueber Bibliotheken): sucht via JDT.LS `java/searchSymbols` auch Klassen aus den **pom-Dependencies/JARs** und dem **JDK**. Auswahl oeffnet den Inhalt als dekompilierte bzw. ueber angehaengte Sources geladene Datei (`jdt://`). Ab 2 Zeichen wird live gesucht.
 - Typ-/Aufruf-Hierarchie: `M-x lsp-java-type-hierarchy`, `M-x lsp-treemacs-call-hierarchy`
 - Fehlerliste (Tool-Window): `M-x lsp-treemacs-errors-list`
 - Diagnose: `flycheck` + `lsp-sonarlint` (SonarLint-aehnliche Inspections)

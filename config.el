@@ -86,7 +86,9 @@
 
 ;; This determines the style of line numbers in effect. If set to `nil', line
 ;; numbers are disabled. For relative line numbers, set this to `relative'.
-(setq display-line-numbers-type t)
+;; `relative' = Vim-Hybrid: aktuelle Zeile zeigt ihre echte Nummer, alle anderen
+;; den Abstand nach oben/unten -> so kann man mit z.B. 5j / 10k gezielt springen.
+(setq display-line-numbers-type 'relative)
 
 ;; If you use `org' and don't want your org files in the default location below,
 ;; change `org-directory'. It must be set before org loads!
@@ -272,7 +274,7 @@ Nuetzlich, wenn der Cursor auf einer Variablen steht und man in deren Typ will."
 ;; ein `doom/reload' (SPC h r r) -- die Eintraege bleiben sonst haengen und die Suche
 ;; klebt weiter unten. Darum hier explizit wieder entfernen -> zentrierte Posframe.
 (after! vertico-multiform
-  (dolist (cmd '(+java/goto-class
+  (dolist (cmd '(+java/goto-class +java/goto-class-anywhere
                  consult-fd consult-find consult-ripgrep consult-git-grep
                  consult-line consult-buffer consult-project-buffer
                  +default/search-project +default/search-project-for-symbol-at-point
@@ -375,10 +377,131 @@ ripgrep-Argumente an (deshalb hier statt eines einfachen consult-ripgrep-Wrapper
   (interactive)
   (+vertico-file-search :args '("--encoding=iso-8859-1")))
 
+;; --------------------------------------------------------------------------
+;; "Go to Class" INKL. Dependencies/JARs (wie IntelliJ Cmd+O ueber Bibliotheken)
+;; --------------------------------------------------------------------------
+;; `SPC s c'/`SPC SPC' sehen bewusst nur Projektdateien. Fuer Klassen aus pom-
+;; Dependencies (und dem JDK) nutzt dieser Befehl JDT.LS' eigene Typsuche
+;; `java/searchSymbols' mit `:sourceOnly :json-false' -> auch Library-Typen.
+;; Die Auswahl oeffnet den (dekompilierten bzw. angehaengten) Quelltext ueber die
+;; jdt://-URI, sodass man den Inhalt anschauen kann.
+
+(defun +java--class-anywhere-transformer (_workspace symbol-info)
+  "Leichter consult-Transformer fuer die Dependency-Klassensuche.
+Baut den Kandidaten NUR aus Name + Package (`containerName') -- bewusst OHNE
+`lsp--uri-to-path': das wuerde jede jdt://-URI SOFORT dekompilieren
+(`java/classFileContents' pro Treffer) und die Liste extrem verlangsamen.
+Dekompiliert wird erst bei Auswahl/Vorschau (siehe `:state')."
+  (let ((name      (lsp:symbol-information-name symbol-info))
+        (container (lsp-get symbol-info :containerName)))
+    (propertize
+     (if (and container (not (string-empty-p container)))
+         (format "%s  %s" name
+                 (propertize container 'face 'completions-annotations))
+       name)
+     'consult--type (consult-lsp--symbols--kind-to-narrow symbol-info)
+     'consult--candidate symbol-info
+     'consult--container-name container)))
+
+(defun +java--class-anywhere-annotate (cand)
+  "Zeigt rechts nur die Symbol-Art (Class/Interface/Enum ...) -- das Package steht
+schon im Kandidaten selbst (siehe `+java--class-anywhere-transformer')."
+  (when-let ((si (get-text-property 0 'consult--candidate cand)))
+    (concat "  " (or (alist-get (lsp:symbol-information-kind si) lsp-symbol-kinds) ""))))
+
+(defun +java--class-anywhere-async-source (workspaces)
+  "consult-Async-Source: Typen ueber JDT.LS `java/searchSymbols' inkl. Dependencies.
+Wie `consult-lsp--symbols--make-async-source', aber Request = `java/searchSymbols'
+mit `:sourceOnly :json-false' -> auch Klassen aus JARs/pom-Dependencies. Die Suche
+retriggert bei jedem Tastendruck (JDT liefert nur begrenzt viele Treffer)."
+  (lambda (sink)
+    (let* ((cancel-token :+java-class-anywhere)
+           (query-lsp
+            (lambda (query)
+              (with-lsp-workspaces workspaces
+                (lsp-request-async
+                 "java/searchSymbols"
+                 ;; "*" -> Prefix/CamelCase-Suche (JDT-Suchmuster); sourceOnly=false
+                 ;; bezieht Bibliotheks-Typen mit ein.
+                 (list :query (concat query "*") :sourceOnly :json-false)
+                 (lambda (res)
+                   (funcall sink 'flush)
+                   (funcall sink res)
+                   (funcall sink [indicator finished]))
+                 :mode 'detached
+                 :no-merge t
+                 :cancel-token cancel-token)))))
+      (lambda (action)
+        (pcase-exhaustive action
+          ;; KEINE Leersuche beim Start: "*" wuerde saemtliche JAR-Klassen ziehen.
+          ('setup (funcall sink action))
+          ((pred stringp)
+           (unless (string= "" action)
+             (funcall sink [indicator running])
+             (funcall query-lsp action))
+           (funcall sink action))
+          ('destroy
+           (lsp-cancel-request-by-token cancel-token)
+           (funcall sink action))
+          (_ (funcall sink action)))))))
+
+;;;###autoload
+(defun +java/goto-class-anywhere ()
+  "IntelliJ \"Go to Class\" INKL. Dependencies/JARs (Cmd+O ueber Bibliotheken).
+Sucht Typen ueber JDT.LS `java/searchSymbols' -- also auch Klassen aus den
+pom-Dependencies und dem JDK, nicht nur im Projekt. Die Auswahl oeffnet den
+(dekompilierten bzw. ueber angehaengte Sources geladenen) Quelltext, sodass man
+sich den Inhalt anschauen kann.
+
+Ab 2 Zeichen wird live gesucht (JDT-Prefix/CamelCase). Fuer die schnelle,
+rein projektlokale Dateisuche weiter `SPC s c' nutzen."
+  (interactive)
+  (require 'consult-lsp)
+  (let* ((ws (or (lsp-workspaces)
+                 (gethash (lsp-workspace-root default-directory)
+                          (lsp-session-folder->servers (lsp-session)))))
+         ;; Erst ab 2 Zeichen suchen -> vermeidet die "*"-Explosion ueber alle JARs.
+         (consult-async-min-input 2))
+    (unless ws
+      (user-error "Kein aktiver LSP-Workspace -- erst eine Java-Datei oeffnen"))
+    (consult--read
+     (consult--async-pipeline
+      (consult--async-min-input)
+      (consult--async-throttle)
+      (+java--class-anywhere-async-source ws)
+      (consult--async-transform
+       (apply-partially
+        #'mapcan
+        (lambda (ws-syms)
+          ;; leichten Transformer verwenden (kein Dekompilieren pro Treffer):
+          (let ((consult-lsp-symbols-transformer-function
+                 #'+java--class-anywhere-transformer))
+            (consult-lsp--symbols--make-transformer ws-syms)))))
+      (consult--async-highlight))
+     :prompt "Klasse (inkl. Dependencies) "
+     :annotate #'+java--class-anywhere-annotate
+     :require-match t
+     :history t
+     :add-history (thing-at-point 'symbol)
+     :category 'consult-lsp-symbols
+     :lookup #'consult--lookup-candidate
+     :group (consult--type-group consult-lsp-symbols-narrow)
+     :narrow (consult--type-narrow consult-lsp-symbols-narrow)
+     ;; :state dekompiliert/oeffnet erst den AUSGEWAEHLTEN Treffer (jdt://) -- lazy.
+     :state (consult-lsp--symbols--state))))
+
 (map! :leader
       :desc "Go to Class (schnell, fd)"    "s c" #'+java/goto-class
       :desc "Symbolsuche (LSP, gruendlich)" "s C" #'+lsp/goto-class
+      :desc "Klasse inkl. Dependencies"    "s a" #'+java/goto-class-anywhere
       :desc "Suche Projekt (Latin-1)"      "s P" #'+search/project-latin1)
+
+;; Definition/Referenzen zusaetzlich auf SPC c j / SPC c J legen (analog zu
+;; SPC c d / SPC c D). Die frueher hier liegende `consult-lsp-symbols'-Suche gibt
+;; es weiter unter SPC s C (gruendlich) bzw. SPC s c (schnell).
+(map! :leader
+      :desc "Zur Definition (wie c d)"  "c j" #'+lookup/definition
+      :desc "Referenzen (wie c D)"      "c J" #'+lookup/references)
 
 ;; Java/Spring-IDE-Erweiterungen (siehe docs/ und +java.el / +git.el):
 ;; Die fruehere handgepflegte `ent/run`-Konfiguration wird durch den
