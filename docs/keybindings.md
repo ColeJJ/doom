@@ -201,7 +201,8 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 |-------|--------------|
 | `g g` | Magit-Status |
 | `g w` | Worktrees |
-| `g d` | **Datei-Diff vs HEAD** (`magit-diff-buffer-file`): aktuelle (uncommittete) Aenderungen der Datei ggü. dem letzten Commit, farbig im Magit-Diff-Buffer |
+| `g d` | **Branch-Diff vs Abzweigpunkt** (`+git/diff-vs-base-branch`, IntelliJ "Compare with Branch"): alles, was auf diesem Branch seit dem Abzweig von `develop`/`master`/`main` passiert ist. `C-u` = Basis-Branch selbst waehlen, `C-u C-u` = inkl. ungecommitteter Aenderungen |
+| `g D` | **Datei-Diff vs HEAD** (`magit-diff-buffer-file`): aktuelle (uncommittete) Aenderungen der Datei ggü. dem letzten Commit, farbig im Magit-Diff-Buffer (ersetzt Dooms `magit-file-delete`) |
 | `g h` | **Datei-Historie mit Diff-Vorschau** (`+git/file-history`, Telescope `git_bufcommits`): Commits dieser Datei, live-Diff beim Blaettern |
 | `g H` | **Datei-Timemachine** (`git-timemachine`): Datei-Versionen mit `n`/`p` durchblaettern |
 | `g L` | **Datei-Historie (Magit-Log)** (`magit-log-buffer-file`): Commit-Log dieser Datei, `RET` = ganzer Commit |

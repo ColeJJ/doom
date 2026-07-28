@@ -126,13 +126,92 @@ Fuer die native Magit-Ansicht siehe `magit-log-buffer-file' (SPC g L)."
 ;; Datei-Historie: SPC g h = Telescope-artiger Commit-Picker mit Diff-Vorschau,
 ;; SPC g H = git-timemachine (Datei-Versionen mit n/p schrittweise durchblaettern),
 ;; SPC g L = native Magit-Datei-Historie (magit-log-buffer-file).
-;; SPC g d = Diff der AKTUELLEN Datei gegen HEAD (letzter Commit) in einem
+;; SPC g d = Diff des GANZEN Branches gegen den Branch, von dem abgezweigt wurde
+;;           (develop/master/main) -- entspricht IntelliJ "Compare with Branch".
+;; SPC g D = Diff der AKTUELLEN Datei gegen HEAD (letzter Commit) in einem
 ;; Magit-Diff-Buffer (Side-Buffer, farbig, navigierbar -- wie die Commit-Ansicht).
 ;; Navigation im Diff: n/p (Hunk), TAB (auf-/zuklappen), C-c C-t (Wort-Diff),
 ;; RET springt an die Stelle in der Datei, q schliesst. Fuer die inline-Variante
 ;; direkt im Datei-Buffer gibt es die Fringe-Marker (diff-hl) + SPC g v (Popup).
+
+;; --------------------------------------------------------------------------
+;; Branch-Diff gegen den Abzweigpunkt (SPC g d)
+;; --------------------------------------------------------------------------
+;; Git kennt den "Ursprungs-Branch" eines Branches NICHT -- diese Information wird
+;; beim Abzweigen nirgends gespeichert. Deshalb wird sie hier ueber den Merge-Base
+;; rekonstruiert: fuer jeden Kandidaten (develop/master/main, lokal bevorzugt, sonst
+;; origin/...) wird `git merge-base' gegen HEAD bestimmt; gewonnen hat der Kandidat
+;; mit dem JUENGSTEN Merge-Base, also dem naechstliegenden Abzweigpunkt. Bei einem
+;; Feature-Branch von develop ist das zuverlaessig develop, auch wenn master als
+;; weiter zurueckliegender Vorfahre ebenfalls passen wuerde.
+
+(defvar +git-base-branches '("develop" "master" "main")
+  "Kandidaten fuer den Basis-Branch, von dem Feature-Branches abgezweigt werden.
+Die Reihenfolge entscheidet nur bei gleichem Merge-Base-Datum; ansonsten gewinnt
+immer der naechstliegende Abzweigpunkt.")
+
+(defun +git--base-branch-refs ()
+  "Existierende Refs aus `+git-base-branches' -- lokal bevorzugt, sonst origin/...
+Der aktuelle Branch selbst wird ausgelassen (Diff gegen sich selbst ist leer)."
+  (let ((cur (magit-get-current-branch))
+        refs)
+    (dolist (name +git-base-branches (nreverse refs))
+      (unless (equal name cur)
+        (when-let ((ref (cond ((magit-rev-verify (concat "refs/heads/" name)) name)
+                              ((magit-rev-verify (concat "refs/remotes/origin/" name))
+                               (concat "origin/" name)))))
+          (push ref refs))))))
+
+(defun +git/base-branch ()
+  "Basis-Branch des aktuellen Branches bestimmen (naechstliegender Abzweigpunkt).
+Liefert (REF . MERGE-BASE-HASH) oder nil, wenn kein Kandidat existiert."
+  (let (best)
+    (dolist (ref (+git--base-branch-refs) best)
+      (when-let* ((mb (magit-git-string "merge-base" "HEAD" ref))
+                  (ts (magit-git-string "show" "-s" "--format=%ct" mb))
+                  (ts (string-to-number ts)))
+        ;; `>' (nicht `>='): bei Gleichstand behaelt der fruehere Kandidat den
+        ;; Vorrang -- daher zaehlt die Reihenfolge in `+git-base-branches'.
+        (when (or (null best) (> ts (nth 2 best)))
+          (setq best (list ref mb ts)))))))
+
+;;;###autoload
+(defun +git/diff-vs-base-branch (&optional include-worktree)
+  "Diff des aktuellen Branches gegen den Branch, von dem abgezweigt wurde.
+Zeigt alle Commits dieses Branches seit dem Abzweigpunkt -- wie IntelliJ
+\"Compare with Branch\". Der Basis-Branch wird automatisch erkannt
+\(`+git-base-branches'), mit `C-u' laesst er sich explizit auswaehlen.
+
+Standardmaessig werden nur COMMITTETE Aenderungen gezeigt (Bereich BASIS...HEAD).
+Mit doppeltem Prefix `C-u C-u' wird stattdessen der Arbeitsbaum gegen den
+Abzweigpunkt gediffed, also inklusive ungestagter/ungecommitteter Aenderungen."
+  (interactive "P")
+  (unless (magit-toplevel) (user-error "Kein Git-Repository"))
+  (let* ((auto (+git/base-branch))
+         (ref  (if (and include-worktree (not (equal include-worktree '(16))))
+                   ;; einfaches C-u -> Basis-Branch selbst waehlen (erkannter als Default)
+                   (magit-read-branch-or-commit "Diff gegen Branch" (car auto))
+                 (car auto))))
+    (unless ref
+      (user-error "Kein Basis-Branch gefunden (gesucht: %s)"
+                  (string-join +git-base-branches ", ")))
+    (let ((mb (magit-git-string "merge-base" "HEAD" ref)))
+      (unless mb
+        (user-error "Kein gemeinsamer Vorfahre mit %s (unabhaengige Historien?)" ref))
+      (if (equal include-worktree '(16))
+          ;; Ein einzelner Commit als Range -> git diff <commit> = gegen Arbeitsbaum
+          (progn
+            (message "Diff %s (Abzweigpunkt %s) vs. Arbeitsbaum"
+                     ref (magit-rev-abbrev mb))
+            (magit-diff-range mb))
+        (message "Diff %s...%s (Abzweigpunkt %s)"
+                 ref (or (magit-get-current-branch) "HEAD") (magit-rev-abbrev mb))
+        (magit-diff-range (format "%s...HEAD" ref))))))
+
 (map! :leader
-      :desc "Datei-Diff vs HEAD" "g d" #'magit-diff-buffer-file)
+      :desc "Branch-Diff vs Abzweigpunkt" "g d" #'+git/diff-vs-base-branch
+      ;; ersetzt Dooms `magit-file-delete' -- Loeschen geht weiter ueber Magit/dired:
+      :desc "Datei-Diff vs HEAD"          "g D" #'magit-diff-buffer-file)
 
 (map! :leader
       :desc "Datei-Historie (Diff-Vorschau)" "g h" #'+git/file-history
@@ -414,7 +493,15 @@ Danach normal editieren; mit `!' (im eDiff-Steuerfenster) die Diffs neu berechne
   :keymap (make-sparse-keymap)
   (if +git-blame-inline-mode
       (+git-blame-inline--enable)
-    (+git-blame-inline--disable)))
+    (+git-blame-inline--disable))
+  ;; WICHTIG: Die RET/q-Bindungen unten liegen (per `map!' :n) in einer evil-
+  ;; Auxiliary-Keymap von `+git-blame-inline-mode-map'. Solche Aux-Maps werden erst
+  ;; aktiv, wenn evil seine Keymaps neu einsammelt -- und das passiert NICHT
+  ;; automatisch, wenn ein Minor-Mode mitten in der Sitzung eingeschaltet wird.
+  ;; Ohne diesen Aufruf blieb RET auf `evil-ret' (= eine Zeile runter) haengen,
+  ;; weil evils State-Maps Vorrang vor `minor-mode-map-alist' haben.
+  (when (fboundp 'evil-normalize-keymaps)
+    (evil-normalize-keymaps)))
 
 ;;;###autoload
 (defun +git/blame-inline-show-commit ()

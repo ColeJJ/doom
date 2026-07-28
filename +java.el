@@ -911,6 +911,25 @@ oberster Ebene -- wie in lsp-java -- ergibt immer `nil' und meldet faelschlich
 ;; die GANZE Debug-Session ueber. Gewuenscht ist IntelliJ-Verhalten: Die Leiste
 ;; erscheint nur, wenn die Ausfuehrung an einem Breakpoint STEHT, und verschwindet
 ;; beim Weiterlaufen bzw. beim Session-Ende wieder.
+;;
+;; WARUM DAS FRUEHER "RANDOM" AUFPOPPTE (analysiert in dap-mode 0.x, dap-ui.el:558):
+;;   `dap-ui--update-controls' zeigt die Leiste, sobald `dap--session-running' t
+;;   liefert -- und das prueft NUR das Statusfeld der Session ("nicht terminated
+;;   und nicht failed"), niemals ob wirklich am Breakpoint gehalten wird oder ob
+;;   der Prozess noch lebt. Eine aus einem frueheren Lauf uebrig gebliebene
+;;   Session (JVM laeuft noch, Socket offen, Status `running') gilt damit als
+;;   aktiv. Gleichzeitig registriert `dap-ui-controls-mode' seinen Updater u.a.
+;;   auf `dap-session-changed-hook' -- der feuert an vielen Stellen, z.B. beim
+;;   Setzen/Loeschen von Breakpoints (dap--set-sessions) oder bei Thread-Events.
+;;   Blieb der Mode nach einem abnormal beendeten Lauf "scharf" (kein
+;;   terminated-Event -> unser Ausschalt-Hook lief nie), genuegte irgendein
+;;   solcher Hook, damit die Leiste ohne erkennbaren Anlass wieder erschien.
+;;
+;; FIX: Nicht auf das Ein-/Ausschalten des Modes verlassen, sondern die Sichtbar-
+;; keit an der Wurzel erzwingen -- die Leiste wird NUR gezeigt, wenn die aktuelle
+;; Session laeuft UND einen aktiven Stackframe hat. Genau dieses Feld ist der
+;; verlaessliche "steht am Breakpoint"-Indikator: gesetzt beim Anspringen des
+;; Frames (dap-mode.el:818), auf nil zurueckgesetzt beim Weiterlaufen (:686).
 
 (after! dap-mode
   ;; `controls' aus der Auto-Konfiguration nehmen -> nicht mehr automatisch beim
@@ -919,16 +938,50 @@ oberster Ebene -- wie in lsp-java -- ergibt immer `nil' und meldet faelschlich
         (delq 'controls dap-auto-configure-features)))
 
 (after! dap-ui
+  (defun +dap--halted-p ()
+    "Non-nil, wenn die aktuelle Debug-Session wirklich an einem Breakpoint steht."
+    (let ((session (ignore-errors (dap--cur-session))))
+      (and session
+           (dap--session-running session)
+           (dap--debug-session-active-frame session)
+           t)))
+
+  (defun +dap--controls-only-when-halted-a (orig &rest args)
+    "Leiste nur beim Halt am Breakpoint zeigen, sonst hart verstecken.
+Ersetzt die Upstream-Bedingung `running?' durch `+dap--halted-p'."
+    (if (+dap--halted-p)
+        (apply orig args)
+      (ignore-errors (posframe-hide dap-ui--control-buffer))))
+
+  (advice-add 'dap-ui--update-controls :around #'+dap--controls-only-when-halted-a)
+
   (defun +dap/controls-on (&rest _)
-    "Debug-Toolbar einblenden (bei Halt am Breakpoint/Step)."
-    (dap-ui-controls-mode 1))
+    "Debug-Toolbar scharfschalten (Session gestartet / Halt am Breakpoint).
+Sichtbar wird sie dadurch noch nicht -- das entscheidet die Advice oben."
+    (unless (bound-and-true-p dap-ui-controls-mode)
+      (dap-ui-controls-mode 1)))
+
   (defun +dap/controls-off (&rest _)
-    "Debug-Toolbar ausblenden (beim Weiterlaufen/Session-Ende)."
-    (dap-ui-controls-mode -1))
-  ;; Hooks werden mit dem debug-session-Objekt aufgerufen -> Argument ignorieren:
-  (add-hook 'dap-stopped-hook    #'+dap/controls-on)   ; Breakpoint erreicht / Step fertig -> zeigen
-  (add-hook 'dap-continue-hook   #'+dap/controls-off)  ; weiter laufen -> verstecken
-  (add-hook 'dap-terminated-hook #'+dap/controls-off)) ; Session zu Ende -> verstecken
+    "Debug-Toolbar ausblenden und abschalten (Weiterlaufen / Session-Ende)."
+    (when (bound-and-true-p dap-ui-controls-mode)
+      (dap-ui-controls-mode -1))
+    (ignore-errors (posframe-hide dap-ui--control-buffer)))
+
+  (defun +dap/controls-reset ()
+    "Notfall-Reset: Debug-Toolbar sofort ausblenden und abschalten.
+Nur noetig, falls doch mal eine Leiste haengen bleibt (z.B. nach einem hart
+abgeschossenen Debug-Prozess)."
+    (interactive)
+    (+dap/controls-off)
+    (message "Debug-Toolbar ausgeblendet"))
+
+  ;; Hooks werden mit dem debug-session-Objekt aufgerufen -> Argument ignorieren.
+  ;; Scharfschalten schon beim Session-Start: `dap-stopped-hook' feuert, BEVOR der
+  ;; Stackframe geholt ist (dap-mode.el:838 vs. :818) -- der Mode muss also vorher
+  ;; stehen, damit der spaetere `dap-stack-frame-changed-hook' die Leiste zeigt.
+  (add-hook 'dap-session-created-hook #'+dap/controls-on)
+  (add-hook 'dap-stopped-hook         #'+dap/controls-on)
+  (add-hook 'dap-terminated-hook      #'+dap/controls-off))
 
 
 ;;; --------------------------------------------------------------------------

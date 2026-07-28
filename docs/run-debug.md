@@ -212,8 +212,31 @@ automatisch wieder.
 Umgesetzt in `+java.el`:
 - `controls` wird aus `dap-auto-configure-features` entfernt (kein Dauer-Einblenden ueber
   die ganze Session).
-- `dap-stopped-hook` -> Toolbar an (`dap-ui-controls-mode 1`),
-  `dap-continue-hook`/`dap-terminated-hook` -> Toolbar aus.
+- Eine Advice auf `dap-ui--update-controls` erzwingt die Sichtbarkeit: gezeigt wird die
+  Leiste **nur**, wenn die aktuelle Session laeuft **und** einen aktiven Stackframe hat --
+  sonst wird sie hart versteckt.
+- `dap-session-created-hook`/`dap-stopped-hook` schalten den Mode scharf,
+  `dap-terminated-hook` schaltet ihn ab.
+
+#### Warum die Leiste frueher "random" aufpoppte
+
+`dap-ui--update-controls` blendet die Leiste upstream ein, sobald `dap--session-running`
+wahr ist -- und das prueft **nur das Statusfeld** der Session ("nicht `terminated`, nicht
+`failed`"), nie ob wirklich gehalten wird oder ob der Prozess noch lebt. Eine aus einem
+frueheren Lauf uebrig gebliebene Session (JVM laeuft noch, DAP-Socket offen, Status
+`running`) gilt damit als aktiv. Gleichzeitig haengt der Updater u.a. an
+`dap-session-changed-hook`, und der feuert an vielen Stellen -- z.B. beim Setzen oder
+Loeschen eines Breakpoints oder bei Thread-Events. Blieb der Mode nach einem abnormal
+beendeten Lauf scharf (kein `terminated`-Event, also lief der Ausschalt-Hook nie), genuegte
+irgendeiner dieser Hooks, damit die Leiste ohne erkennbaren Anlass wieder erschien.
+
+Das reine Ein-/Ausschalten des Modes war dagegen nicht robust genug -- deshalb haengt die
+Sichtbarkeit jetzt an `dap--debug-session-active-frame`. Genau dieses Feld ist der
+verlaessliche "steht am Breakpoint"-Indikator: dap setzt es beim Anspringen des Frames und
+setzt es beim Weiterlaufen wieder auf `nil`.
+
+Falls doch einmal eine Leiste haengen bleibt (z.B. nach einem hart abgeschossenen
+Debug-Prozess): `M-x +dap/controls-reset` blendet sie sofort aus.
 
 Hinweis: Die Toolbar ist eine `posframe` und funktioniert daher nur im **GUI-Emacs**,
 nicht im Terminal (`et`).
