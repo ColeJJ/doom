@@ -3,8 +3,85 @@
 ## Magit (vorhanden)
 
 - Status: `SPC g g`
-- Blame: `SPC g B`, Time-Machine: `SPC g t`, Datei im Browser: `SPC g o`
+- Blame/Annotate: `SPC g B` (inline im Buffer) bzw. `SPC g A` (separate Ansicht), Time-Machine: `SPC g t`, Datei im Browser: `SPC g o`
 - Diff in der Fringe (diff-hl/vc-gutter) ist aktiv.
+
+## Datei-/Klassen-Historie (wie Telescope `git_bufcommits`)
+
+Um die Aenderungen an der aktuellen Datei Commit fuer Commit visuell durchzugehen:
+
+- **`SPC g d`** -> `magit-diff-buffer-file`: zeigt den **Diff der aktuellen Datei
+  gegen HEAD** (den letzten Commit) -- also deine noch nicht committeten Aenderungen --
+  in einem farbigen **Magit-Diff-Buffer** (Side-Buffer, wie die Commit-Ansicht).
+  Navigation: `n`/`p` (Hunk), `TAB` (Hunk auf-/zuklappen), `RET` springt an die Stelle
+  in der Datei, `q` schliesst. Fuer die **inline**-Variante direkt im Datei-Buffer (wie
+  git blame) gibt es die Fringe-Marker von `diff-hl` + `SPC g v` (Hunk-Popup, siehe
+  Abschnitt Git-Gutter).
+- **`SPC g h`** -> `+git/file-history`: **Telescope-artiger Commit-Picker** mit
+  **Live-Diff-Vorschau**. Listet alle Commits, die die aktuelle Datei geaendert haben
+  (neueste zuerst, mit Hash/Datum/Autor/Betreff). Waehrend man durch die Liste
+  blaettert, zeigt die Vorschau live den Diff **genau dieser Datei** im jeweiligen
+  Commit (`git show <hash> -- FILE`, farbig im `diff-mode`). `RET` laesst den
+  Diff-Buffer offen, damit man die Aenderung in Ruhe anschauen kann. Umbenennungen
+  werden bei der Auflistung via `--follow` mitgenommen (der Diff bezieht sich auf den
+  aktuellen Pfad -- vor einer Umbenennung kann er leer sein, es kommt dann ein Hinweis).
+- **`SPC g H`** -> `git-timemachine`: blaettert die Datei-**Versionen** schrittweise
+  durch (`n` = aelter, `p` = neuer, `q` = Ende) -- man sieht den Datei-Inhalt zum
+  jeweiligen Commit statt des Diffs.
+- **`SPC g L`** -> `magit-log-buffer-file`: native **Magit-Datei-Historie**; `RET` auf
+  einem Commit zeigt den vollstaendigen Commit (alle Dateien) mit Magit-Navigation.
+
+## Cherry-Pick: Commits aus einer Parent-Branch in die aktuelle holen
+
+Ziel: einzelne (ausgewaehlte) Commits aus einer anderen Branch (z.B.
+`origin/maintenance/14.7.2-x`) in die **aktuell ausgecheckte** Branch uebernehmen.
+Das cherry-pickt jeden gewaehlten Commit als **neuen Commit** auf deinen HEAD.
+
+> Wichtig: Vorher auf die **Ziel-Branch** wechseln (die, in die gepickt werden soll).
+> Kontrolle im Status (`SPC g g`): oben bei `Head:` muss die Ziel-Branch stehen.
+> Arbeitsverzeichnis sollte sauber sein (sonst erst committen/stashen, `SPC g g` -> `z z`).
+
+### Variante A -- Commits im Log der Parent-Branch visuell auswaehlen (empfohlen)
+
+1. `SPC g g` -> Magit-Status (HEAD = Ziel-Branch pruefen).
+2. `l o` (`magit-log-other`) -> Parent-Branch/Revision eingeben, z.B.
+   `origin/maintenance/14.7.2-x`. Es oeffnet sich deren Commit-Log.
+3. Im Log die Commits auswaehlen:
+   - **Ein Commit:** Cursor auf den Commit, dann `A A` (Pick = `magit-cherry-copy`).
+   - **Mehrere Commits:** Region markieren -- in evil mit `V` (visual-line) ueber die
+     gewuenschten Commits ziehen (oder `C-SPC` Mark setzen und mit `j`/`k` erweitern) --
+     dann `A A`. Magit picked alle markierten Commits, **aeltester zuerst**.
+4. `RET` auf einem Commit oeffnet vorher den Diff -- so siehst du, was du pickst.
+
+### Variante B -- Commit(s) direkt per Hash/Ref
+
+1. `SPC g g` (auf Ziel-Branch).
+2. `A A` -> Magit fragt nach dem Commit -> Hash (z.B. `e83448d`), Ref oder Ausdruck
+   wie `origin/master~2` eingeben. Ein Bereich `<alt>..<neu>` picked mehrere.
+
+### Das `A`-Menue (Cherry-Pick-Transient) im Ueberblick
+
+| Taste | Befehl | Wirkung |
+|-------|--------|---------|
+| `A A` | `magit-cherry-copy`   | **Pick** -- Commit(s) als neue Commits uebernehmen (`git cherry-pick`) |
+| `A a` | `magit-cherry-apply`  | **Apply** -- Aenderungen nur in Working-Tree/Index, **ohne** eigenen Commit (`-n`) |
+| `A h` | `magit-cherry-harvest`| Commit(s) hierher holen **und** in der Quell-Branch entfernen |
+| `A d` | `magit-cherry-donate` | Commit(s) an eine andere Branch abgeben (aus HEAD entfernen) |
+| `A n`/`A s` | Spinout / Spinoff | Commit(s) in eine neue Branch aus-/abzweigen |
+
+### Konflikte / Sequenz steuern
+
+Stoppt der Cherry-Pick wegen eines Konflikts:
+1. Konflikte in den betroffenen Dateien loesen.
+2. Im Status (`SPC g g`) die geloesten Dateien stagen (`s`).
+3. `A` oeffnen -> **continue** fortsetzt, **skip** ueberspringt diesen Commit,
+   **abort** bricht die gesamte Sequenz ab (macht bereits Gepicktes rueckgaengig).
+
+### Tipp: passende Commits finden
+
+`Y` (`magit-cherry`) im Status vergleicht zwei Branches und listet die Commits, die in
+der Parent-Branch, aber **noch nicht** in HEAD sind -- ideal, um zu sehen, was ueberhaupt
+zum Picken infrage kommt. Von dort aus ebenfalls mit `A A` pickbar.
 
 ## Diff-Darstellung wie in IntelliJ
 
@@ -71,3 +148,70 @@ git config core.hooksPath .githooks   # wird von allen Worktrees geteilt
 
 Hinweis: Direkte Schreibzugriffe ins `entscheidungen`-Repo wurden in dieser
 Einrichtung absichtlich nicht vorgenommen; bitte obige Schritte manuell ausfuehren.
+
+## Git-Gutter (diff-hl) -- wie IntelliJ/VSCode
+
+Am linken Fringe zeigen farbige Balken die noch nicht committeten Aenderungen relativ
+zu HEAD -- **live beim Tippen** (Dooms `vc-gutter +pretty` via `diff-hl`, `flydiff`):
+gruen = hinzugefuegt, gelb/orange = geaendert, rot = geloescht.
+
+Interaktion (IntelliJ-artig):
+
+| Taste / Aktion | Wirkung |
+|----------------|---------|
+| **Klick auf den Fringe-Marker** | Popup mit der Aenderung + Buttons (verwerfen/stagen/kopieren/naechster) |
+| `SPC g v` | Hunk unter dem Cursor als **Popup** anzeigen (`diff-hl-show-hunk`) |
+| `] d` / `[ d` | zum **naechsten/vorherigen** Hunk springen (auch `SPC g ]` / `SPC g [`) |
+| `SPC g r` | Hunk **verwerfen** (Rollback, `+vc-gutter/save-and-revert-hunk`) |
+| `SPC g S` | Hunk/Datei **stagen** (`magit-file-stage`) |
+
+Ist schon out-of-the-box aktiv (`global-diff-hl-mode`); die Klick-/Popup-Extras kommen
+aus [`+git.el`](../+git.el) (`global-diff-hl-show-hunk-mouse-mode` + `SPC g v`).
+
+## eDiff: an der Stelle editieren
+
+Innerhalb einer eDiff-Sitzung kannst du die verglichenen Buffer **direkt editieren**:
+
+- **Direkt reinklicken**: mit der Maus (oder `C-x o`) ins gewuenschte Fenster
+  wechseln und normal tippen. eDiff erlaubt das Editieren der Variant-Buffer
+  jederzeit. Nach den Aenderungen im eDiff-Steuerfenster **`!`** druecken -> die
+  Diffs werden neu berechnet.
+- **`E` (Shortcut im Steuerfenster)** -> `+ediff/edit-mine`: springt von der
+  aktuellen Diff-Stelle direkt in den **eigenen** Buffer (bei 3-Wege = `C`,
+  Working-Tree/rechts; sonst `B`) und setzt den Cursor genau auf die Aenderung.
+- **Zurueck ins Steuerfenster** (wo `n`/`p` etc. wirken): `C-x o` (Fenster wechseln,
+  Setup ist `plain` = ein Frame) **oder** `C-c e` -> `+ediff/goto-control` als
+  direkter Sprung ins `*Ediff Control Panel*` (wirkt auch im Insert-State).
+  Danach `!` zum Neuberechnen der Diffs.
+
+> Merke: `n`/`p` = naechste/vorherige Aenderung, `a`/`b` = Seite kopieren,
+> `!` = Diffs neu berechnen, `E` = ins eigene Buffer springen/editieren, `C-x o`/`C-c e` = zurueck ins Steuerfenster, `q` = Ende.
+
+
+## Blame / Annotate wie IntelliJ
+
+Zwei Varianten:
+
+### `SPC g B` – Inline im selben Buffer (Standard, wie IntelliJ Annotate)
+
+Blendet Commit-Kürzel, Autor und Datum je Zeile in der **linken Margin des aktuellen
+Puffers** ein – kein separater Buffer, das **Syntax-Highlighting des Codes bleibt
+erhalten**. Die Margin ist **nach Alter eingefärbt** (frisch = rot/orange … alt =
+blau/violett; Verlauf via `+git-blame-age-colors` in `+git.el`). Während der Ansicht
+ist der Puffer schreibgeschützt.
+
+| Taste | Wirkung |
+|-------|---------|
+| `RET` | Commit-Diff der aktuellen Zeile ansehen (die Änderung) |
+| `q` bzw. erneut `SPC g B` | Inline-Blame wieder ausschalten (Puffer wieder editierbar) |
+
+Nicht committete Zeilen erscheinen als `••••••• (lokal)`.
+
+### `SPC g A` – Separate Ansicht (`vc-annotate`)
+
+Öffnet die klassische `vc-annotate`-Ansicht in einem eigenen Buffer (färbt den
+Code-Text nach Alter). Dort: `RET`/`d` = Diff der Zeile, `D` = Changeset-Diff,
+`l` = Log, `a` = weiter in die Historie, `q` = schließen.
+
+Für den *inline*-Blick auf reine Zeilenänderungen (ohne Blame) bleiben zusätzlich
+die `diff-hl`-Fringe-Marker + `SPC g v` (Hunk-Popup).

@@ -62,3 +62,11 @@
 ;; Postgres-DB-Viewer (IntelliJ-Datenbank-Tool-Aequivalent), via Git installiert:
 (package! pg     :recipe (:host github :repo "emarsden/pg-el"))   ; Postgres-Wire-Protokoll (pg.el)
 (package! pgmacs :recipe (:host github :repo "emarsden/pgmacs"))  ; Tabellen-Browser/Editor
+
+;; kotlin-ts-mode: Dooms Pin (051c9ef) ist zu alt fuer die aktuelle fwcd-tree-sitter-
+;; kotlin-Grammar (Branch `main'). Die alte Version nutzt Grammar-Knoten, die es in
+;; `main' nicht mehr gibt (z.B. `!is'/`!in'-Tokens) und fehlt umgekehrt Knoten wie
+;; `null_literal' -> die Font-Lock-Queries brechen komplett ab: GAR KEIN Highlighting.
+;; Neuere Upstream-Version (gitlab bricka/emacs-kotlin-ts-mode) passt zur `main'-Grammar.
+;; Grammar-Revision wird in +java.el auf `main' gepinnt (`+kotlin-ts-grammar-revision').
+(package! kotlin-ts-mode :pin "39e30e4cf803910c2f6716efd7a5cd408a9d996b")

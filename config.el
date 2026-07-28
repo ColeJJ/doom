@@ -62,6 +62,24 @@
     (+tty/inherit-terminal-background)))
 (map! :leader :desc "Theme wechseln (sauber)" "h t" #'+theme/load)
 
+;; SPC f d -> Verzeichnis im Projekt suchen und oeffnen (statt Dooms +default/dired).
+;; projectile-find-dir listet alle Verzeichnisse des aktuellen Projekts (Completion).
+(map! :leader :desc "Verzeichnis im Projekt suchen" "f d" #'projectile-find-dir)
+;; Spiegel-Bindings unter dem Find-Prefix (gleiche Optik/Funktion):
+;; SPC f c = Datei im Projekt finden WORTGENAU (projectile-find-file, zusammenhaengend).
+;; Die FUZZY-Variante (Luecken erlaubt, wie IntelliJ) liegt auf SPC SPC (weiter unten).
+;; SPC f C = Klasse inkl. Dependencies finden (identisch zu SPC s a)
+(map! :leader
+      :desc "Datei finden (wortgenau)" "f c" #'projectile-find-file
+      :desc "Klasse inkl. Dependencies (wie SPC s a)" "f C" #'+java/goto-class-anywhere)
+
+;; SPC f m -> "Find Method" wie IntelliJ (File Structure / Go to Symbol in File):
+;; consult-imenu listet alle Methoden/Funktionen/Klassen der AKTUELLEN Datei als
+;; schnellen Vertico-Picker (mit Icons, live-Filter) -- sieht aus wie Find File/Dir.
+;; RET springt zur Definition. Fuer projektweite Symbol-/Klassensuche: SPC s c.
+(map! :leader :desc "Methode im Projekt finden (LSP)" "f m" #'+find/project-method)
+;; (Methoden NUR der aktuellen Datei weiterhin ueber SPC s i / consult-imenu.)
+
 ;; --------------------------------------------------------------------------
 ;; Einheitlicher Hintergrund im Terminal (et): Theme-Hintergrund weglassen
 ;; --------------------------------------------------------------------------
@@ -186,6 +204,7 @@
   "Direkt zur Definition des Symbols unter dem Cursor springen (Klasse/Interface/
 Enum/Methode) -- ohne Peek-/Referenzliste. Nutzt LSP, sonst xref als Fallback."
   (interactive)
+  (when (fboundp 'better-jumper-set-jump) (better-jumper-set-jump))
   (if (bound-and-true-p lsp-mode)
       (lsp-find-definition)
     (call-interactively #'xref-find-definitions)))
@@ -194,13 +213,104 @@ Enum/Methode) -- ohne Peek-/Referenzliste. Nutzt LSP, sonst xref als Fallback."
   "Direkt zum TYP (Klasse/Interface/Enum) des Symbols unter dem Cursor springen.
 Nuetzlich, wenn der Cursor auf einer Variablen steht und man in deren Typ will."
   (interactive)
+  (when (fboundp 'better-jumper-set-jump) (better-jumper-set-jump))
   (if (bound-and-true-p lsp-mode)
       (lsp-find-type-definition)
     (user-error "Typ-Definition braucht einen aktiven LSP-Server")))
 
+;; --------------------------------------------------------------------------
+;; Referenzen wie IntelliJ: genau EINE Referenz -> direkt dahin springen
+;; --------------------------------------------------------------------------
+;; Find Usages mit nur einem Treffer soll nicht erst eine 1-Zeilen-Liste zeigen,
+;; sondern direkt springen (wie IntelliJ). Bei mehreren Treffern die normale Liste.
+(defun +java/references-smart ()
+  "Referenzen/Find Usages. Genau EINE Referenz (ohne die Deklaration) -> direkt
+dahin springen (wie IntelliJ), sonst die uebliche Referenzliste. Ohne LSP: Fallback."
+  (interactive)
+  (if (not (bound-and-true-p lsp-mode))
+      (call-interactively #'+lookup/references)
+    (let* ((refs  (ignore-errors
+                    (lsp-request "textDocument/references"
+                                 (lsp--make-reference-params nil t)))) ; t = ohne Deklaration
+           (items (and refs (lsp--locations-to-xref-items refs))))
+      (cond
+       ((null items)
+        (message "Keine Referenzen gefunden (ausser der Deklaration)"))
+       ((= (length items) 1)
+        (when (fboundp 'better-jumper-set-jump) (better-jumper-set-jump))
+        (xref-push-marker-stack)
+        (let ((m (xref-location-marker (xref-item-location (car items)))))
+          (pop-to-buffer-same-window (marker-buffer m))
+          (goto-char m)
+          (recenter))
+        (message "Einzige Referenz -- direkt gesprungen (zurueck: C-o)"))
+       (t (call-interactively #'+lookup/references))))))
+
 (map! :leader
       :desc "Definition: direkt springen" "c g" #'+java/jump-to-definition
       :desc "Typ-Definition: direkt springen" "c G" #'+java/jump-to-type-definition)
+
+;; WICHTIG (Performance): `g d' / `SPC c j' / `SPC c d' waren Dooms `+lookup/definition'.
+;; Dessen Fallback-Kette grept bei fehlgeschlagenem/langsamem xref das GESAMTE Projekt
+;; (hier: 8 Maven-Projekte im Workspace) durch -> "laedt ewig und springt dann nicht".
+;; Diese drei jetzt ebenfalls direkt per LSP springen (wie `SPC c g'): sofortiger Sprung
+;; in derselben Klasse, und bei Miss ein schnelles xref statt monorepo-weitem ripgrep.
+;; `g d' nur in LSP-Buffern umbiegen (sonst bleibt Dooms Standard aktiv).
+(after! lsp-mode (map! :map lsp-mode-map :n "g d" #'+java/jump-to-definition))
+(map! :leader
+      :desc "Definition: direkt springen (LSP)" "c d" #'+java/jump-to-definition
+      :desc "JDT.LS: nur aktuelles Projekt"     "p P" #'+java/lsp-prune-to-current-project)
+
+;; --------------------------------------------------------------------------
+;; SPC j = "jump" -- Navigation (Definition/Referenzen/Super/Interface<->Impl)
+;; --------------------------------------------------------------------------
+;; j d = direkt zur Definition (LSP, kein Peek, kein projektweiter ripgrep-Fallback)
+;; j r = Referenzen / Find Usages
+;; j i = von der Implementierung zur Methode im Interface/Supertyp springen
+;;       (lsp-java-open-super-implementation, IntelliJ "Go to Super Method")
+;; j I = zwischen XService.java und XServiceImpl.java wechseln (+java/toggle-impl)
+(map! :leader
+      (:prefix ("j" . "jump")
+       :desc "Zur Definition (direkt, LSP)"  "d" #'+java/jump-to-definition
+       :desc "Referenzen (1 Treffer -> direkt)" "r" #'+java/references-smart
+       :desc "Super-Methode (wie m i)"       "i" #'lsp-java-open-super-implementation
+       :desc "Interface <-> Impl (wie m I)"  "I" #'+java/toggle-impl))
+
+;; Projekt auf Fehler pruefen (IntelliJ "Build Project" / Ctrl+F9): kompiliert den
+;; ganzen Reactor und listet ALLE Fehler projektweit (auch in nicht geoeffneten Dateien),
+;; navigierbar mit ]e / [e. C-u = nur aktuelles Modul + Dependents (-amd).
+(map! :leader
+      :desc "Projekt pruefen (alle Fehler)" "c B" #'+java/check-project)
+
+;; --- Fix fuer `SPC c x' (+default/diagnostics -> consult-lsp-diagnostics) ---
+;; Der eingebaute Transformer formatiert jeden Eintrag mit "%-60.60s" -- also hart
+;; auf 60 Zeichen abgeschnitten. Bei unseren tiefen Paketpfaden ist nach 60 Zeichen
+;; erst ".../de/guidecom/entscheidun" erreicht: Klassenname UND Zeilennummer fallen
+;; weg, alle Eintraege sehen gleich aus -> man landet gefuehlt in der "falschen Datei".
+;; Eigener Transformer: "Dateiname:Zeile  Meldung  (Verzeichnis)" -- nichts wird
+;; abgeschnitten, jede Zeile ist eindeutig ihrer Datei zuzuordnen (und filterbar).
+(after! consult-lsp
+  (defun +consult-lsp-diagnostics-transformer (file diag)
+    "Wie der Original-Transformer, aber ohne 60-Zeichen-Truncation.
+Zeigt `Dateiname:Zeile' gefolgt von der Meldung und dem (verkuerzten) Pfad."
+    (let* ((wks   (lsp-workspace-root file))
+           (rel   (if wks (f-relative file wks) file))
+           (line  (lsp-translate-line
+                   (1+ (lsp-get (lsp-get (lsp-get diag :range) :start) :line))))
+           (base  (file-name-nondirectory file))
+           (dir   (or (file-name-directory rel) ""))
+           (msg   (replace-regexp-in-string
+                   "[ \t\n\r]+" " " (or (lsp-get diag :message) ""))))
+      (propertize
+       (format "%-34s %s  %s"
+               (concat (propertize base 'face 'consult-file)
+                       ":" (number-to-string line))
+               (string-trim msg)
+               (propertize dir 'face 'completions-annotations))
+       'consult--candidate (cons file diag)
+       'consult--type (consult-lsp--diagnostics--severity-to-type diag))))
+  (setq consult-lsp-diagnostics-transformer-function
+        #'+consult-lsp-diagnostics-transformer))
 
 
 ;; Open file in finder (macos)
@@ -249,30 +359,18 @@ Nuetzlich, wenn der Cursor auf einer Variablen steht und man in deren Typ will."
   ;; optional, falls du auch ```kt benutzen willst
   (add-to-list 'markdown-code-lang-modes '("kt" . kotlin-mode)))
 
-;; Such-/Auswahlfenster (vertico +childframe = vertico-posframe) NICHT springen lassen.
-;; Ursache des "Herumspringens": das Posframe passt Groesse dynamisch an die Trefferzahl
-;; an und wird dabei neu zentriert. -> feste Breite/Hoehe + kein Resizing = stabil.
+;; Vertico laeuft wieder im normalen Minibuffer UNTEN (Doom-Original) -- KEIN
+;; Childframe/Posframe mehr (das `+childframe'-Flag ist in init.el entfernt).
 (after! vertico
-  ;; resize nil => vertico zeigt IMMER `vertico-count' Zeilen (auch mit Padding).
-  ;; Dadurch ist die Hoehe konstant (kein Springen) und die Liste scrollt/rotiert
-  ;; normal durch alle Treffer.
-  (setq vertico-resize nil
-        vertico-count 17))                    ; feste Anzahl sichtbarer Eintraege
-(after! vertico-posframe
-  ;; WICHTIG: `vertico-posframe-height' NICHT absolut setzen -- das nagelt die Hoehe
-  ;; starr fest und verhindert das Mitscrollen der Kandidatenliste. Stattdessen Hoehe
-  ;; automatisch (folgt `vertico-count', dank resize nil konstant) + min-height als
-  ;; Untergrenze gegen Schrumpfen. Breite bleibt fix gegen horizontales Springen.
-  (setq vertico-posframe-poshandler #'posframe-poshandler-frame-center  ; immer zentriert
-        vertico-posframe-width 160            ; feste Breite (Zeichen)
-        vertico-posframe-min-width 120        ; nicht schmaler werden
-        vertico-posframe-height nil           ; Hoehe automatisch (= vertico-count, stabil)
-        vertico-posframe-min-height (1+ vertico-count)))  ; Untergrenze: Prompt + Eintraege
+  ;; grow-only: der Minibuffer waechst mit der Trefferzahl bis `vertico-count' und
+  ;; schrumpft nicht bei jedem Tastendruck -> ruhiges, stocknahes Verhalten unten.
+  (setq vertico-resize 'grow-only
+        vertico-count 17))                    ; max. Anzahl sichtbarer Eintraege
 
 ;; Aufraeumen: eine fruehere Session hatte diese Befehle testweise auf das
 ;; vertico-buffer-Layout (Frame-Unterkante) gestellt. `add-to-list' ueberlebt aber
-;; ein `doom/reload' (SPC h r r) -- die Eintraege bleiben sonst haengen und die Suche
-;; klebt weiter unten. Darum hier explizit wieder entfernen -> zentrierte Posframe.
+;; ein `doom/reload' (SPC h r r) -- die Eintraege bleiben sonst haengen. Darum hier
+;; explizit entfernen -> es bleibt beim normalen Minibuffer unten.
 (after! vertico-multiform
   (dolist (cmd '(+java/goto-class +java/goto-class-anywhere
                  consult-fd consult-find consult-ripgrep consult-git-grep
@@ -370,12 +468,23 @@ Mit Praefix-Arg (\\[universal-argument]) stattdessen die gruendliche LSP-Symbols
 ;; Diese Variante liest die Dateien als Latin-1 -> Umlaute in *.properties werden gefunden.
 ;; (Die normale `SPC s p' bleibt UTF-8, passend fuer Java/XML-Quellen mit Umlauten.)
 (defun +search/project-latin1 ()
-  "Wie `SPC s p', liest die Dateien aber als ISO-8859-1 (fuer Latin-1-*.properties).
-Nutzt Dooms `+vertico-file-search' und haengt `--encoding=iso-8859-1' an die
-ripgrep-Argumente an (deshalb hier statt eines einfachen consult-ripgrep-Wrappers --
-`+vertico-file-search' baut `consult-ripgrep-args' sonst intern komplett neu)."
+  "Literale Projektsuche in ISO-8859-1/Latin-1-Dateien (fuer Latin-1-*.properties).
+Wie `SPC s p', aber (a) liest die Dateien als ISO-8859-1 -> findet Umlaute in
+Latin-1-*.properties, und (b) sucht KOMPLETT LITERAL (`-F'/fixed-strings): die
+Eingabe wird 1:1 gesucht -- Leerzeichen und Regex-Zeichen wie `.' `(' `*' zaehlen
+woertlich, nichts wird als Regex interpretiert. Ideal fuer Property-Keys wie
+`ent.db.server'. Zusatz-Flags weiter per ` -- ...' moeglich (z.B. `-s' case-sensitiv)."
   (interactive)
-  (+vertico-file-search :args '("--encoding=iso-8859-1")))
+  (+vertico-file-search :args '("--encoding=iso-8859-1" "-F")))
+
+;;;###autoload
+(defun +search/project-literal ()
+  "KOMPLETT LITERALE Projektsuche (UTF-8), wie `SPC s p' aber mit `-F'/fixed-strings.
+Die Eingabe wird exakt so gesucht, wie sie dasteht -- Leerzeichen und Regex-Zeichen
+(`.' `(' `[' `*' `?' ...) werden woertlich genommen, nichts als Regex interpretiert.
+Fuer Latin-1-*.properties stattdessen `SPC s P' (liest zusaetzlich als ISO-8859-1)."
+  (interactive)
+  (+vertico-file-search :args '("-F")))
 
 ;; --------------------------------------------------------------------------
 ;; "Go to Class" INKL. Dependencies/JARs (wie IntelliJ Cmd+O ueber Bibliotheken)
@@ -494,14 +603,8 @@ rein projektlokale Dateisuche weiter `SPC s c' nutzen."
       :desc "Go to Class (schnell, fd)"    "s c" #'+java/goto-class
       :desc "Symbolsuche (LSP, gruendlich)" "s C" #'+lsp/goto-class
       :desc "Klasse inkl. Dependencies"    "s a" #'+java/goto-class-anywhere
-      :desc "Suche Projekt (Latin-1)"      "s P" #'+search/project-latin1)
-
-;; Definition/Referenzen zusaetzlich auf SPC c j / SPC c J legen (analog zu
-;; SPC c d / SPC c D). Die frueher hier liegende `consult-lsp-symbols'-Suche gibt
-;; es weiter unter SPC s C (gruendlich) bzw. SPC s c (schnell).
-(map! :leader
-      :desc "Zur Definition (wie c d)"  "c j" #'+lookup/definition
-      :desc "Referenzen (wie c D)"      "c J" #'+lookup/references)
+      :desc "Suche literal+Latin-1 (-F)"   "s P" #'+search/project-latin1
+      :desc "Suche literal (fixed, -F)"    "s F" #'+search/project-literal)
 
 ;; Java/Spring-IDE-Erweiterungen (siehe docs/ und +java.el / +git.el):
 ;; Die fruehere handgepflegte `ent/run`-Konfiguration wird durch den
@@ -552,3 +655,174 @@ lokale Treemacs-Fenster -- unabhaengig davon, welches Fenster gerade fokussiert 
   (advice-add 'treemacs-TAB-action  :after #'+treemacs/fit-width-to-content)
   (advice-add 'treemacs-RET-action  :after #'+treemacs/fit-width-to-content)
   (advice-add 'treemacs-toggle-node :after #'+treemacs/fit-width-to-content))
+
+;; --------------------------------------------------------------------------
+;; Syntax-Highlighting fuer .properties (conf-javaprop-mode)
+;; --------------------------------------------------------------------------
+;; conf-javaprop-mode faerbt von Haus aus nur Kommentare und (theme-abhaengig oft
+;; unsichtbar, im tj-Theme z.B. = Standardtextfarbe) den Key. Separator `=`/`:`
+;; und Wert bleiben voellig ungefaerbt -> es sieht "ohne Highlighting" aus.
+;; Darum hier zusaetzliche Font-Lock-Regeln, theme-unabhaengig gut sichtbar:
+;;   Key     -> keyword-face   (im tj-Theme lila)
+;;   `=`/`:` -> operator-face  (Separator)
+;;   Wert    -> string-face    (gruen)
+;;   ${..}/@..@ -> constant-face (Platzhalter, z.B. ${java.io.tmpdir}, Maven-Filter)
+(defun +conf/properties-highlight ()
+  "Zusaetzliches Highlighting fuer key=value, Separator und ${..}/@..@-Platzhalter."
+  (font-lock-add-keywords
+   nil
+   '(;; key <sep> value -- Kommentarzeilen (# / !) sind ueber das erste Zeichen ausgeschlossen:
+     ("^[ \t]*\\([^#!:=[:space:]][^:=\n]*\\)\\([:=]\\)\\(.*\\)$"
+      (1 'font-lock-keyword-face t)
+      (2 'font-lock-operator-face t)
+      (3 'font-lock-string-face t))
+     ;; ${...}-Platzhalter ueber dem Wert hervorheben (z.B. ${tenant.info.tenant}):
+     ("\\${[^}\n]*}" 0 'font-lock-constant-face prepend)
+     ;; @...@-Platzhalter (Maven-Resource-Filtering):
+     ("@[A-Za-z0-9_.:-]+@" 0 'font-lock-constant-face prepend))
+   'append)
+  (when (bound-and-true-p font-lock-mode)
+    (font-lock-flush)))
+
+;; conf-javaprop-mode ist von conf-mode abgeleitet -> Hook nur an conf-mode haengen;
+;; dann greift es fuer .properties UND generische conf-Dateien (ohne Doppel-Fontify).
+(add-hook 'conf-mode-hook #'+conf/properties-highlight)
+
+;; Dooom Docker Integration
+;; Spaltenbreiten anpassen
+(after! docker
+  (setf (plist-get
+         (seq-find
+          (lambda (column)
+            (equal (plist-get column :name) "Ports"))
+          docker-container-columns)
+         :width)
+        35))
+
+;; --------------------------------------------------------------------------
+;; SPC SPC: FUZZY/FLEX-Dateisuche (Luecken erlaubt, wie IntelliJ)
+;; --------------------------------------------------------------------------
+;; Dooms Standard-orderless matcht ein eingegebenes Wort als ZUSAMMENHAENGENDEN
+;; Teilstring (orderless-literal) -> "AgendapunktService" findet NICHT
+;; "AgendapunktDummyService". Fuer SPC SPC stellen wir das Matching auf FLEX um
+;; (Zeichen in Reihenfolge, mit Luecken) -- genau wie IntelliJs Datei-/Symbolsuche.
+;; SPC f c bleibt BEWUSST wortgenau (unveraendert projectile-find-file), fuer exakte
+;; zusammenhaengende Treffer.
+(defun +find/find-file-fuzzy ()
+  "Projektdatei-Suche mit FUZZY/FLEX-Matching (Luecken erlaubt, wie IntelliJ).
+`AgendapunktService' findet damit auch `AgendapunktDummyService' (Zeichen in
+Reihenfolge, mit Luecken). Fuer die wortgenaue Variante gibt es weiterhin `SPC f c'."
+  (interactive)
+  (require 'orderless)
+  (let ((orderless-matching-styles '(orderless-flex)))
+    (call-interactively #'projectile-find-file)))
+
+(map! :leader
+      :desc "Datei finden (fuzzy, wie IntelliJ)" "SPC" #'+find/find-file-fuzzy)
+
+;; SPC f M = Methodensuche wie SPC f m, aber INKL. Dependency-Quellprojekte
+;; (alle JDT.LS-Workspace-Ordner, z.B. service-framework-core). Gleiche flache
+;; Vertico-Optik; Projektname steht im Pfad. Fuer Library-TYPEN: SPC s a.
+(map! :leader
+      :desc "Methode inkl. Dependencies finden" "f M" #'+find/project-method-deps)
+
+;; SPC c m = Methoden/Struktur der AKTUELLEN Datei auflisten und hinspringen
+;; (consult-imenu, gleiche Liste wie SPC s i). Fuer methodenweite Suche im ganzen
+;; Projekt: SPC f m, inkl. Dependencies: SPC f M.
+(map! :leader
+      :desc "Methoden dieser Datei (imenu)" "c m" #'consult-imenu)
+
+;; --------------------------------------------------------------------------
+;; gD = zur IMPLEMENTIERUNG springen (wie IntelliJ Ctrl+Alt+B)
+;; --------------------------------------------------------------------------
+;; gd springt zur Definition (bei Interfaces also ins Interface). gD springt
+;; stattdessen in die IMPLEMENTIERUNG. Genau EINE Implementierung -> direkt dahin
+;; (wie IntelliJ), sonst die uebliche Auswahlliste. Ohne LSP: Fallback. Zurueck: C-o.
+(defun +java/implementation-smart ()
+  "Zur Implementierung springen (wie IntelliJ Ctrl+Alt+B). Genau EINE Implementierung
+-> direkt dahin springen, sonst Liste. Ohne LSP: Fallback auf +lookup/implementations."
+  (interactive)
+  (if (not (bound-and-true-p lsp-mode))
+      (call-interactively #'+lookup/implementations)
+    (let* ((locs  (ignore-errors
+                    (lsp-request "textDocument/implementation"
+                                 (lsp--text-document-position-params))))
+           (items (and locs (lsp--locations-to-xref-items locs))))
+      (cond
+       ((null items)
+        (message "Keine Implementierung gefunden"))
+       ((= (length items) 1)
+        (when (fboundp 'better-jumper-set-jump) (better-jumper-set-jump))
+        (xref-push-marker-stack)
+        (let ((m (xref-location-marker (xref-item-location (car items)))))
+          (pop-to-buffer-same-window (marker-buffer m))
+          (goto-char m)
+          (recenter))
+        (message "Einzige Implementierung -- direkt gesprungen (zurueck: C-o)"))
+       (t (call-interactively #'+lookup/implementations))))))
+
+(after! lsp-mode
+  (map! :map lsp-mode-map :n "g D" #'+java/implementation-smart))
+
+;; --------------------------------------------------------------------------
+;; Find-File: kompilierte bin/-Pfade (Eclipse-Output) ignorieren
+;; --------------------------------------------------------------------------
+;; In den Modulen liegen untracked `bin/'-Ordner (Eclipse-Build-Output, z.B.
+;; entscheidungen-webapp/bin/src/...). Sie sind NICHT in .gitignore, daher tauchen
+;; sie in SPC SPC / find-file auf. Projectile listet Dateien hier ueber `fd'
+;; (projectile-git-use-fd = t) -> wir schliessen `bin' per `-E bin' aus. Zusaetzlich
+;; fuer den git-ls-files-Fallback (ohne fd) `-x bin'. Der PERSISTENTE Projekt-Cache
+;; muss danach einmal neu: SPC p i (projectile-invalidate-cache).
+(after! projectile
+  (unless (string-match-p "-E bin\\b" projectile-git-fd-args)
+    (setq projectile-git-fd-args (concat projectile-git-fd-args " -E bin")))
+  (setq projectile-git-command "git ls-files -zco --exclude-standard -x bin"))
+
+;; --------------------------------------------------------------------------
+;; find-file: Treffer in Split-Fenster oeffnen (statt im selben Buffer)
+;; --------------------------------------------------------------------------
+;; Ueber Embark: der project-file-Kandidat wird per Transformer in den absoluten
+;; Pfad aufgeloest, die Aktion bekommt also den fertigen Pfad. `V' = vertikaler
+;; Split (Fenster rechts, nebeneinander, wie Vim :vsplit), `|' = horizontaler
+;; Split (Fenster unten). Bereits vorhanden: `o' = find-file-other-window.
+(after! embark
+  (defun +embark/find-file-vsplit (file)
+    "Datei in vertikalem Split (Fenster RECHTS, nebeneinander) oeffnen."
+    (interactive "FDatei: ")
+    (select-window (split-window-right))
+    (find-file file))
+  (defun +embark/find-file-hsplit (file)
+    "Datei in horizontalem Split (Fenster UNTEN) oeffnen."
+    (interactive "FDatei: ")
+    (select-window (split-window-below))
+    (find-file file))
+  (defun +embark/switch-buffer-vsplit (buffer)
+    "Buffer in vertikalem Split (Fenster RECHTS) oeffnen."
+    (interactive "BBuffer: ")
+    (select-window (split-window-right))
+    (switch-to-buffer buffer))
+  (define-key embark-file-map   "V" #'+embark/find-file-vsplit)
+  (define-key embark-file-map   "|" #'+embark/find-file-hsplit)
+  (define-key embark-buffer-map "V" #'+embark/switch-buffer-vsplit))
+
+;; Direkte Ein-Tasten-Kuerzel im Vertico-Minibuffer (ohne vorher C-; zu druecken):
+;; C-c v = vertikaler Split (rechts), C-c s = horizontaler Split (unten).
+;; Technik: den Embark-Aktions-Tastendruck vorab in die Eingabe schieben und
+;; embark-act ausloesen -> agiert auf dem aktuell markierten Treffer.
+(after! vertico
+  (defun +vertico/open-vsplit ()
+    "Markierten Treffer in vertikalem Split (Fenster rechts) oeffnen."
+    (interactive)
+    (require 'embark)
+    (setq unread-command-events (listify-key-sequence "V"))
+    (embark-act))
+  (defun +vertico/open-hsplit ()
+    "Markierten Treffer in horizontalem Split (Fenster unten) oeffnen."
+    (interactive)
+    (require 'embark)
+    (setq unread-command-events (listify-key-sequence "|"))
+    (embark-act))
+  (define-key vertico-map (kbd "C-c v") #'+vertico/open-vsplit)
+  (define-key vertico-map (kbd "C-c s") #'+vertico/open-hsplit)
+  ;; Shift+Enter (GUI): Treffer direkt im vertikalen Split (rechts) oeffnen
+  (define-key vertico-map (kbd "S-<return>") #'+vertico/open-vsplit))

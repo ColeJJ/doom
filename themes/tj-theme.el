@@ -212,10 +212,30 @@
    `(diff-header    ((t (:foreground ,blue :weight bold))))
    `(diff-file-header ((t (:foreground ,fg :weight bold))))
    `(diff-hunk-header ((t (:foreground ,gray3 :background ,gray1))))
-   `(ediff-current-diff-A ((t (:background ,gray1))))
-   `(ediff-current-diff-B ((t (:background ,gray1))))
-   `(ediff-fine-diff-A ((t (:background ,red :foreground ,gray0))))
-   `(ediff-fine-diff-B ((t (:background ,green :foreground ,gray0))))
+   ;; ediff: VOLLSTAENDIGER Satz (A/B/C + even/odd), dezente Toenungen statt
+   ;; vollflaechigem Rot/Gruen. Wichtig fuer 3-Wege-Diffs (HEAD/Index/Working aus
+   ;; Magit): ohne die C- und even/odd-Faces fielen die auf grelle Emacs-Defaults
+   ;; ("dark grey"/"dim grey") zurueck -> uneinheitlicher, greller Look.
+   ;; current-diff = ganze aktuelle Diff-Region (leicht getoent),
+   ;; fine-diff = die konkret geaenderten Woerter (etwas kraeftiger),
+   ;; even/odd-diff = alle uebrigen (nicht-aktuellen) Diff-Regionen (nur gray1).
+   ;; KEINE flaechige Hinterlegung: current-diff und even/odd verschmelzen mit dem
+   ;; Hintergrund (bg). Nur die geaenderten Stellen (`fine-diff') werden getoent --
+   ;; links rot (A), Mitte gruen (B), rechts blau (C). WICHTIG: fine-diff setzt NUR
+   ;; einen (dunklen) Hintergrund und KEIN :foreground -> so bleiben die Code-/
+   ;; Syntax-Farben von font-lock in allen drei Spalten sichtbar.
+   `(ediff-current-diff-A ((t (:background ,bg :extend t))))
+   `(ediff-current-diff-B ((t (:background ,bg :extend t))))
+   `(ediff-current-diff-C ((t (:background ,bg :extend t))))
+   `(ediff-fine-diff-A ((t (:background "#5a3436"))))   ; links = rot getoent
+   `(ediff-fine-diff-B ((t (:background "#2f4a33"))))   ; Mitte = gruen getoent
+   `(ediff-fine-diff-C ((t (:background "#2e3f5c"))))   ; rechts = blau getoent
+   `(ediff-even-diff-A ((t (:background ,bg :extend t))))
+   `(ediff-even-diff-B ((t (:background ,bg :extend t))))
+   `(ediff-even-diff-C ((t (:background ,bg :extend t))))
+   `(ediff-odd-diff-A  ((t (:background ,bg :extend t))))
+   `(ediff-odd-diff-B  ((t (:background ,bg :extend t))))
+   `(ediff-odd-diff-C  ((t (:background ,bg :extend t))))
    `(magit-section-heading     ((t (:foreground ,yellow :weight bold))))
    `(magit-section-highlight   ((t (:background ,gray1 :extend t))))
    `(magit-branch-local        ((t (:foreground ,blue :weight bold))))

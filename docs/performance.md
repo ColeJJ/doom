@@ -218,3 +218,105 @@ emacs --batch --eval '(princ (native-comp-available-p))'   # t erwartet
 emacsclient -e '(native-comp-available-p)'                 # t (Daemon laeuft)
 find ~/.config/emacs/.local/cache/eln -name '*.eln' | wc -l  # > 0
 ```
+
+## "Timeout while waiting for response. Method: textDocument/rangeFormatting"
+
+**Symptom:** Beim Formatieren (`=` / `SPC c f`) kommt sporadisch der Timeout, obwohl
+nur wenige Zeilen formatiert werden. 10 s sollten dafuer massig reichen.
+
+**Ursache (nicht JDT!):** Der JDT-Server antwortet schnell (im `*lsp-log*` sind
+Validierung/Reconcile bei 1-170 ms, der Java-Prozess liegt bei 0 % CPU). Das Problem
+liegt auf der **Emacs-Seite (macOS-NS-Build)**: `lsp-format-region` schickt eine
+*synchrone* Anfrage und wartet in `accept-process-output` -> `ns_select`. Dabei pumpt
+Emacs den AppKit-Event-Loop. Fragt macOS in dem Moment intensiv die
+**Accessibility/Fenster-API** ab (Stage Manager / Fenster-Tiling / a11y-Clients),
+verbringt der Event-Loop die Zeit dort, statt die *laengst eingetroffene* JDT-Antwort
+aus der Pipe zu lesen -> die synchrone Anfrage laeuft in den 10-s-Timeout.
+
+Ein `sample <emacs-pid> 2` zeigte genau diesen Stack:
+`evil-indent -> lsp-format-region -> lsp-request -> accept-process-output -> ns_select_1
+-> NSApplication run -> NSAccessibility.../SkyLight run_query -> mach_msg`.
+Kurzzeitig 98 % CPU (Burst), danach wieder `sleeping` (0-2 %).
+
+**Warum trifft es Formatierung und nicht Completion?** Formatierung ist eine *synchrone*
+`lsp-request`, die den Main-Thread blockiert. Completion/Diagnostics laufen asynchron
+und scheitern nicht an einem einzelnen Timeout.
+
+**Beguenstigend:** Ein sehr lang laufender Daemon (hier 26 h Uptime, Peak-Footprint
+4,2 GB). Lange NS-Daemons sammeln diese AppKit/a11y-Latenz an.
+
+### Fix / Vorgehen
+1. **Daemon neu starten** (wichtigster Hebel, frischer NS-Zustand):
+   ```sh
+   emacsclient -e '(save-buffers-kill-emacs)'   # sichert & beendet, danach Autostart/neu oeffnen
+   # oder hart:  pkill -x Emacs   (Vorsicht: ungesicherte Buffer!)
+   ```
+2. `lsp-response-timeout` bleibt bei **10 s** (Default) -- der Wert war nie das Problem.
+3. Optional gegen Hintergrund-Last im Event-Loop: `lsp-modeline-code-actions-mode`
+   feuert `textDocument/codeAction` in `post-command-hook` (im Log:
+   "Cancelling textDocument/codeAction ... in hook post-command-hook"). Bei Bedarf
+   abschaltbar (Code-Actions gibt es weiter per Shortcut).
+4. Optional echter LSP-Perf-Boost: `lsp-use-plists` (Env `LSP_USE_PLISTS=true` beim
+   Doom-Build) -- schnelleres Deserialisieren grosser LSP-Antworten.
+
+### Schnell-Diagnose
+```sh
+ps ax -o pid,stat,%cpu,command | grep -i '[E]macs'   # CPU/Status des Daemons
+sample <emacs-pid> 2                                   # Stacktrace: wo haengt der Main-Thread?
+emacsclient -e '(emacs-uptime)'                        # lange Uptime? -> neu starten
+```
+
+## CPU-Bursts beim Editieren/Formatieren = Garbage Collection (Fix: lsp-use-plists)
+
+**Beobachtung:** Beim Tippen/Formatieren/Indexieren springt die Emacs-CPU kurz hoch
+(gemessen: 3 % -> 76 % -> 18 %). Ein `sample` zeigt als heisseste Emacs-Funktionen fast
+ausschliesslich **GC**: `process_mark_stack`, `sweep_strings`, `sweep_conses`,
+`cons_marked_p`. Im echten Leerlauf: **0 GCs**. Die Spitzen sind also **GC-Pausen**.
+
+**Warum:** JDT liefert grosse JSON-Antworten (Completion, Code-Actions, Indexierung).
+lsp-mode deserialisiert die per Default in **Hash-Tables** -> sehr viel kurzlebiger Muell
+-> haeufige GC. Ueber eine lange Session waechst der Heap (Peak hier 4,2 GB) -> GC-Pausen
+werden laenger -> eine Pause reisst irgendwann den 10-s-Format-Timeout -> "hilft nur
+Daemon-Neustart". Auf dem macOS-NS-Build addiert sich der AppKit-Event-Loop dazu.
+
+### Fix: `lsp-use-plists` (aktiviert)
+lsp-mode kann Antworten als **Plists statt Hash-Tables** halten -> deutlich weniger
+Allokationen/GC und weniger Speicher. Das ist die offizielle LSP-Perf-Empfehlung.
+Wichtig: Der Wert wird zur **Compile-Zeit** in die lsp-Makros eingebacken. Also:
+
+1. `~/.zshenv`: `export LSP_USE_PLISTS=true` (wird VOR `.zshrc` geladen -> der aus
+   `.zshrc` gestartete Daemon erbt die Variable).
+2. **Alle** lsp-abhaengigen Pakete konsistent neu kompilieren (sonst Format-Mismatch
+   zwischen Plist-Daten und Hashtable-Zugriffs-Makros):
+   ```sh
+   LSP_USE_PLISTS=true ~/.config/emacs/bin/doom sync --rebuild
+   ```
+3. Veraltete **native** `.eln` der lsp/dap-Pakete loeschen (die byte-kompilierte `.elc`
+   war frisch, die `.eln` aber vom alten Build ohne Plists -> Emacs wuerde die alte
+   `.eln` laden). Der Source-Hash im `.eln`-Namen aendert sich NICHT durch die
+   Env-Variable, daher manuell entfernen:
+   ```sh
+   find ~/.config/emacs/.local/cache/eln -type f \
+     \( -name 'lsp-*.eln' -o -name 'dap-*.eln' -o -name 'consult-lsp-*.eln' \) -delete
+   ```
+4. Daemon **einmalig** neu starten (mit gesetzter Env-Variable):
+   ```sh
+   emacsclient -e '(progn (save-some-buffers t) (kill-emacs))'
+   LSP_USE_PLISTS=true emacs --daemon
+   ```
+
+**Verifizieren:**
+```sh
+emacsclient -e '(progn (require (quote lsp-mode)) (list (getenv "LSP_USE_PLISTS") lsp-use-plists))'
+# -> ("true" "true")
+```
+
+Danach werden die lsp/dap-`.eln` beim ersten echten Einsatz im Hintergrund neu (mit
+Plists) erzeugt; bis dahin laeuft die frische Plists-`.elc`. Kein wiederkehrender
+Daemon-Neustart mehr noetig.
+
+### Optional zusaetzlich (ohne Neustart)
+- `lsp-modeline-code-actions-enable nil` in `+java.el`: die Lightbulb feuert
+  `textDocument/codeAction` bei JEDEM Kommando (im `*lsp-log*`: "Cancelling
+  textDocument/codeAction ... in hook post-command-hook"). Aus = weniger Requests/Muell;
+  Code-Actions bleiben on-demand per `SPC c a`.

@@ -202,10 +202,22 @@
    `(diff-header    ((t (:foreground ,iris :weight bold))))
    `(diff-file-header ((t (:foreground ,text :weight bold))))
    `(diff-hunk-header ((t (:foreground ,subtle :background ,surface))))
-   `(ediff-current-diff-A ((t (:background ,hl-low))))
-   `(ediff-current-diff-B ((t (:background ,hl-low))))
-   `(ediff-fine-diff-A ((t (:background ,love-dim :foreground ,text))))
-   `(ediff-fine-diff-B ((t (:background ,pine :foreground ,text))))
+   ;; ediff: VOLLSTAENDIGER Satz (A/B/C + even/odd) fuer 3-Wege-Diffs, sonst fielen
+   ;; C-/even-/odd-Faces auf grelle Emacs-Defaults zurueck.
+   ;; Keine Flaechen; nur fine-diff getoent (rot/gruen/blau), OHNE :foreground,
+   ;; damit die Syntax-Farben in allen drei Spalten durchscheinen.
+   `(ediff-current-diff-A ((t (:background ,base :extend t))))
+   `(ediff-current-diff-B ((t (:background ,base :extend t))))
+   `(ediff-current-diff-C ((t (:background ,base :extend t))))
+   `(ediff-fine-diff-A ((t (:background "#3a2a35"))))   ; links = rot getoent
+   `(ediff-fine-diff-B ((t (:background "#26402e"))))   ; Mitte = gruen getoent
+   `(ediff-fine-diff-C ((t (:background "#2b2f45"))))   ; rechts = blau getoent
+   `(ediff-even-diff-A ((t (:background ,base :extend t))))
+   `(ediff-even-diff-B ((t (:background ,base :extend t))))
+   `(ediff-even-diff-C ((t (:background ,base :extend t))))
+   `(ediff-odd-diff-A  ((t (:background ,base :extend t))))
+   `(ediff-odd-diff-B  ((t (:background ,base :extend t))))
+   `(ediff-odd-diff-C  ((t (:background ,base :extend t))))
 
    ;; ---- Magit ----
    `(magit-section-heading     ((t (:foreground ,gold :weight bold))))

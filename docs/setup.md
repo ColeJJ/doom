@@ -124,3 +124,26 @@ Theme und laedt dann sauber das gewaehlte (verhindert Face-Reste des alten Theme
 
 Dauerhaft als Standard setzen: in `config.el` `doom-theme` und die `load-theme`-Zeile
 auf `'rose-pine-moon` aendern.
+
+### `tj`-Theme in IntelliJ IDEA importieren
+
+Das `tj`-Farbschema liegt zusaetzlich als IntelliJ-Color-Scheme unter
+[`themes/intellij/tj.icls`](../themes/intellij/tj.icls) bereit (Editor-Syntaxfarben,
+kein UI/Window-Theme). Import:
+
+1. IntelliJ: **Settings/Preferences** oeffnen (`Cmd+,`).
+2. **Editor > Color Scheme**.
+3. Rechts oben aufs **Zahnrad** (⚙) neben dem Scheme-Dropdown -> **Import Scheme...**.
+4. Datei `~/.config/doom/themes/intellij/tj.icls` auswaehlen, bestaetigen.
+5. Oben im Dropdown **"tj"** auswaehlen, **Apply/OK**.
+
+Enthalten sind die `tj`-Syntaxfarben (gelbe Funktionen, violette Keywords, kursive
+Typen/Kommentare, gruene Strings, rote Zahlen, orange Konstanten) plus Editor-,
+Diff-, Fehler/Warnungs- und Konsolenfarben.
+
+Hinweise:
+- Der IntelliJ-Font (Kursiv fuer Typen/Kommentare) folgt dem Attribut -- falls Kursiv
+  nicht erscheint, in **Editor > Font** eine Schrift mit Italic-Schnitt waehlen.
+- `.icls` ist nur das **Editor-Farbschema**, nicht das Fenster-/Toolbar-Theme. Fuer
+  einen komplett dunklen Rahmen zusaetzlich ein dunkles UI-Theme (z.B. Darcula) aktiv
+  lassen -- `tj.icls` setzt darauf auf (`parent_scheme="Darcula"`).
