@@ -127,8 +127,8 @@ Funktion ohne 1:1-Pendant). Stattdessen mehrgleisig abgesichert:
 
 1. **Im Buffer sichtbar:** JDT.LS/flycheck markieren Warnungen (unused imports,
    ungenutzte Variablen ...) direkt im Code -- inline am Zeilenende (`lsp-ui-sideline`,
-   bleibt fuer Diagnostics an) und in der Fringe. Gesamtliste: `SPC c x`
-   (`flycheck-list-errors`) bzw. `M-x lsp-treemacs-errors-list`.
+   bleibt fuer Diagnostics an) und in der Fringe. LSP-Diagnosen dieser Datei: `SPC c x`;
+   die Gesamtliste des Projekts/Workspaces: `SPC c X`.
 2. **Automatisch beim Speichern:** `lsp-java-save-actions-organize-imports` entfernt
    ungenutzte Imports beim Speichern -- so landen sie gar nicht erst im Commit.
 3. **Pre-Commit-Hook:** kompiliert die betroffenen Module (siehe unten) und stoppt

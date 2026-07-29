@@ -422,12 +422,64 @@ Darum hier nach oben durchlaufen, bis kein hoeheres pom.xml mehr existiert."
               (m (locate-dominating-file f "pom.xml")))
     (directory-file-name (file-relative-name m (+mvn--root)))))
 
+(defvar-local +mvn--output-return-configuration nil
+  "Fensteraufteilung vor dem Oeffnen dieses Maven-Ausgabe-Buffers.")
+
+(defvar-local +mvn--output-return-buffer nil
+  "Code-Buffer, zu dem `q' aus diesem Maven-Ausgabe-Buffer zurueckkehrt.")
+
+;;;###autoload
+(defun +mvn/quit-output ()
+  "Maven-Ausgabe schliessen und die vorherige Code-Ansicht wiederherstellen.
+Die Ausgabe und ein eventuell weiterlaufender Maven-Prozess bleiben erhalten;
+der Buffer ist mit `SPC b b' erneut erreichbar."
+  (interactive)
+  (let ((configuration +mvn--output-return-configuration)
+        (source +mvn--output-return-buffer))
+    (cond
+     ((window-configuration-p configuration)
+      (set-window-configuration configuration))
+     ((buffer-live-p source)
+      (switch-to-buffer source))
+     (t
+      (quit-window)))))
+
+(defun +mvn--show-output (buffer configuration source)
+  "BUFFER als maximale Maven-Ausgabe zeigen und Rueckkehr zu SOURCE einrichten."
+  (with-current-buffer buffer
+    (setq-local +mvn--output-return-configuration configuration
+                +mvn--output-return-buffer source)
+    ;; `local-set-key' deckt den normalen Emacs-State ab; fuer Evil braucht es
+    ;; zusaetzlich eine bufferlokale Normal-State-Bindung.
+    (local-set-key (kbd "q") #'+mvn/quit-output)
+    (when (fboundp 'evil-local-set-key)
+      (evil-local-set-key 'normal (kbd "q") #'+mvn/quit-output)))
+  ;; Nicht Dooms Compilation-Side-Window verwenden: Der Output ersetzt die
+  ;; aktuelle Ansicht vollstaendig. Die gespeicherte Konfiguration stellt `q'
+  ;; anschliessend einschliesslich Splits und Cursor-Position wieder her.
+  (switch-to-buffer buffer)
+  (delete-other-windows)
+  buffer)
+
+(defun +mvn/compile (command)
+  "COMMAND im maximalen Maven-Ausgabe-Buffer ausfuehren.
+Anders als `compile' wird kein Side-Buffer angelegt. `q' stellt die vorherige
+Code-Ansicht wieder her. Rueckgabewert ist der Compilation-Buffer."
+  (let ((configuration (current-window-configuration))
+        (source (current-buffer))
+        ;; `compilation-start' verwendet `display-buffer'. Ohne diese lokale
+        ;; Uebersteuerung wuerde Doom zuerst seinen unteren Side-Buffer oeffnen.
+        (display-buffer-overriding-action
+         '((display-buffer-no-window) (allow-no-window . t))))
+    (+mvn--show-output (compilation-start command 'compilation-mode)
+                       configuration source)))
+
 (defun +mvn-run (goals &optional this-module)            ; mvn-Aufruf via compile-Buffer
   (let* ((default-directory (+mvn--root))
          (args (string-join (transient-args '+mvn/menu) " "))
          (pl (if (and this-module (+mvn--module))
                  (format "-pl %s -am " (+mvn--module)) "")))
-    (compile (format "mvn %s%s %s" pl args goals))))
+    (+mvn/compile (format "mvn %s%s %s" pl args goals))))
 
 (transient-define-prefix +mvn/menu ()
   "Maven-Lifecycle und -Goals fuer das aktuelle Projekt/Modul."
@@ -478,9 +530,9 @@ Mit Praefix-Arg (\\[universal-argument]) im Modul der aktuellen Datei (-pl <modu
          (pl   (if (and this-module (+mvn--module))
                    (format "-pl %s -am " (+mvn--module)) ""))
          (default-directory (file-name-as-directory root)))
-    (compile (format "cd %s && mvn %s %s%s"
-                     (shell-quote-argument root)
-                     +idea--mvn-ssl-flags pl goal))))
+    (+mvn/compile (format "cd %s && mvn %s %s%s"
+                          (shell-quote-argument root)
+                          +idea--mvn-ssl-flags pl goal))))
 
 ;; --- "Rebuild Project" (wie IntelliJ): ganzes Projekt von Grund auf neu bauen ---
 (defvar +mvn-rebuild-goals "clean install -DskipTests"
@@ -497,9 +549,9 @@ Laeuft `mvn clean install -DskipTests' ueber den kompletten Reactor im Projekt-R
   (let* ((root (directory-file-name (expand-file-name (+mvn--root))))
          (default-directory (file-name-as-directory root)))
     (message "Rebuild Project: mvn %s (kompletter Reactor) -- das dauert ..." +mvn-rebuild-goals)
-    (compile (format "cd %s && mvn -Pent-dev %s %s"
-                     (shell-quote-argument root)
-                     +idea--mvn-ssl-flags +mvn-rebuild-goals))))
+    (+mvn/compile (format "cd %s && mvn -Pent-dev %s %s"
+                          (shell-quote-argument root)
+                          +idea--mvn-ssl-flags +mvn-rebuild-goals))))
 
 
 ;;; --------------------------------------------------------------------------
@@ -555,23 +607,154 @@ Laeuft `mvn clean install -DskipTests' ueber den kompletten Reactor im Projekt-R
                                wd))))
 
 (defvar +idea-extra-classpath-dirs '("src/test/resources/conf")
-  "Zusaetzliche Verzeichnisse (relativ zum Arbeitsverzeichnis der Run-Config), die
-beim dap-Start (SPC m r) VORNE auf den Classpath gelegt werden.
+  "Zusaetzliche Ressourcenverzeichnisse relativ zum Arbeitsverzeichnis einer Run-Config.
 
 Hintergrund: Das Maven-Profil `ent-dev' (entscheidungen-webapp/pom.xml) haengt
 `src/test/resources/conf' als <resource> an und legt dessen Inhalt so auf den
 Classpath-ROOT -- dort liegt `ent.application.properties' mit `ent.db.server',
 `ent.db.database' usw. IntelliJ hat dieses Profil angehakt; JDT.LS/dap kennen es
 NICHT. Ohne diese Dateien bricht Spring mit \"Could not resolve placeholder
-'ent.db.server'\" ab. Darum wird das Verzeichnis hier explizit ergaenzt.")
+'ent.db.server'\" ab. Darum wird der Inhalt beim DAP-Start lokal nach
+`target/classes' gespiegelt, das bereits auf JDT.LS' Standard-Classpath liegt.")
 
-(defun +idea--resolve-classpath (main module)
-  "Von JDT.LS aufgeloesten Classpath (Vector) fuer MAIN/MODULE holen, sonst nil."
-  (ignore-errors
-    (cl-second
-     (with-lsp-workspace (lsp-find-workspace 'jdtls)
-       (lsp-send-execute-command "vscode.java.resolveClasspath"
-                                 (vector main module))))))
+(defun +idea--sync-extra-classpath-resources (working-directory)
+  "Entwicklungsressourcen nach WORKING-DIRECTORY/target/classes spiegeln.
+Damit braucht der DAP-Start KEIN synchrones
+`vscode.java.resolveClasspath'-Kommando von JDT.LS. Dieses Kommando kann bei
+einem parallel importierenden Maven-Reactor das LSP-Timeout erreichen und den
+gesamten Start verhindern. `target/classes' ist ohnehin Teil des von JDT.LS
+aufgeloesten Standard-Classpaths; das Kopieren bildet deshalb exakt nach, was
+Mavens `ent-dev'-Profil beim `process-resources'-Schritt tut."
+  (when (and working-directory (file-directory-p working-directory))
+    (let ((target (expand-file-name "target/classes/" working-directory))
+          synced)
+      (dolist (relative +idea-extra-classpath-dirs)
+        (let ((source (expand-file-name relative working-directory)))
+          (when (file-directory-p source)
+            (make-directory target t)
+            ;; COPY-CONTENTS=t: Dateien liegen direkt im Classpath-Root, nicht
+            ;; unter `conf/' -- genau wie bei <resource><directory>.../conf.
+            (copy-directory source target t t t)
+            (push (abbreviate-file-name source) synced))))
+      (when synced
+        (message "DAP: Entwicklungsressourcen nach target/classes gespiegelt: %s"
+                 (string-join (nreverse synced) ", "))))))
+
+(defvar +idea--classpath-cache (make-hash-table :test #'equal)
+  "Einmalig per Maven ermittelte DAP-Classpaths, nach Arbeitsverzeichnis.")
+
+(defun +idea--path-separator-string ()
+  "Den plattformabhaengigen Classpath-Separator stets als String liefern."
+  (if (characterp path-separator)
+      (char-to-string path-separator)
+    path-separator))
+
+(defun +idea--reactor-output-dirs ()
+  "Existierende `target/classes'-Verzeichnisse aller lokalen Reactor-Module."
+  (seq-filter
+   #'file-directory-p
+   (mapcar (lambda (module)
+             (expand-file-name "target/classes" module))
+           (+java--reactor-module-dirs (+idea--project-root)))))
+
+(defun +idea--maven-classpath-for-dap (working-directory)
+  "Offline-Maven-Runtime-Classpath fuer WORKING-DIRECTORY, inklusive Reactor-Outputs.
+JDT.LS haengt in diesem Projekt gelegentlich beim eigenen
+`vscode.java.resolveClasspath'-Kommando. `dap-java' kann den Classpath aber
+direkt als `:classPaths' erhalten; so bleibt nur der schnelle, unabhaengige
+Maven-Aufruf. `-o' verhindert Netz-/Nexus-Wartezeiten. Das Ergebnis wird pro
+Modul gecacht und ist nach dem ersten Start sofort verfuegbar."
+  (let* ((directory (file-name-as-directory (expand-file-name working-directory)))
+         (cached (gethash directory +idea--classpath-cache)))
+    (or cached
+        ;; `maven-dependency-plugin' schreibt nicht verlaesslich in eine bereits
+        ;; existierende (leere) Datei. `make-temp-name' reserviert nur den Namen.
+        (let ((output-file (make-temp-name
+                            (expand-file-name "doom-dap-classpath-"
+                                              temporary-file-directory)))
+              (log-buffer (generate-new-buffer " *doom-dap-maven-classpath*"))
+              classpath)
+          (unwind-protect
+              (let ((default-directory directory))
+                (message "DAP: ermittle Maven-Runtime-Classpath einmalig (offline) ...")
+                (if (and (executable-find "mvn")
+                         (zerop
+                          (call-process
+                           "mvn" nil log-buffer nil
+                           "-q" "-o" "-Pent-dev"
+                           "dependency:build-classpath"
+                           ;; JettyStarterXML steckt in `sodalis-runtime', das
+                           ;; im Webapp-POM bewusst `provided' ist. IntelliJ
+                           ;; stellt es fuer die lokale Jetty-Run-Config dennoch
+                           ;; bereit -- deshalb hier `compile', nicht `runtime'.
+                           "-DincludeScope=compile"
+                           (concat "-Dmdep.outputFile=" output-file)
+                           (concat "-Dmdep.pathSeparator="
+                                   (+idea--path-separator-string))))
+                         (file-exists-p output-file))
+                    (let* ((dependencies
+                            (split-string (string-trim
+                                           (with-temp-buffer
+                                             (insert-file-contents output-file)
+                                             (buffer-string)))
+                                          (regexp-quote (+idea--path-separator-string)) t))
+                           (reactor-outputs (+idea--reactor-output-dirs))
+                           (paths (delete-dups (append reactor-outputs dependencies))))
+                      (unless paths
+                        (user-error "Maven lieferte einen leeren Runtime-Classpath"))
+                      (setq classpath (vconcat paths))
+                      (puthash directory classpath +idea--classpath-cache)
+                      (message "DAP: Maven-Runtime-Classpath bereit (%d Eintraege)."
+                               (length paths))
+                      classpath)
+                  (user-error
+                   "Maven-Runtime-Classpath konnte nicht ermittelt werden. Details: %s"
+                   (buffer-name log-buffer))))
+            (ignore-errors (delete-file output-file))
+            ;; Bei Erfolg ist der Prozesslog wertlos; bei einem Fehler bleibt er
+            ;; absichtlich zur Diagnose als Buffer erhalten.
+            (when classpath
+              (kill-buffer log-buffer)))))))
+
+(defvar-local +dap--output-return-configuration nil
+  "Fensteraufteilung vor dem Oeffnen dieses DAP-Ausgabe-Buffers.")
+
+(defvar-local +dap--output-return-buffer nil
+  "Code-Buffer, zu dem `q' aus diesem DAP-Ausgabe-Buffer zurueckkehrt.")
+
+;;;###autoload
+(defun +dap/quit-output ()
+  "DAP-Ausgabe schliessen und die vorherige Code-Ansicht wiederherstellen."
+  (interactive)
+  (let ((configuration +dap--output-return-configuration)
+        (source +dap--output-return-buffer))
+    (cond
+     ((window-configuration-p configuration)
+      (set-window-configuration configuration))
+     ((buffer-live-p source)
+      (switch-to-buffer source))
+     (t
+      (quit-window)))))
+
+(defun +dap--show-output (session configuration source)
+  "Die Ausgabe von SESSION maximiert anzeigen und `q' zur Rueckkehr einrichten.
+`dap-java' schreibt Run- UND Debug-Ausgaben nicht in einen Compilation-Buffer,
+sondern in den sessionspezifischen `*... out*'-Buffer. Deshalb kann
+`+mvn/compile' diesen Pfad nicht abdecken."
+  (when-let ((buffer (and session
+                          (dap--debug-session-output-buffer session))))
+    (with-current-buffer buffer
+      (setq-local +dap--output-return-configuration configuration
+                  +dap--output-return-buffer source)
+      (local-set-key (kbd "q") #'+dap/quit-output)
+      (when (fboundp 'evil-local-set-key)
+        (evil-local-set-key 'normal (kbd "q") #'+dap/quit-output)))
+    ;; Wie bei Maven: keine DAP-/Doom-Side-Windows, sondern fokussierte Ausgabe.
+    ;; Der DAP-Auto-UI-Hook kann vor diesem Zeitpunkt seine Paneele erzeugen; die
+    ;; Vollfenster-Ansicht hier ist bewusst der letzte Schritt des Starts.
+    (switch-to-buffer buffer)
+    (delete-other-windows)
+    buffer))
 
 (defun +idea--launch (name cfg debug)                    ; via dap-java starten (debug=nil -> reiner Run)
   (require 'dap-java)
@@ -583,28 +766,34 @@ NICHT. Ohne diese Dateien bricht Spring mit \"Could not resolve placeholder
                 (seq-some (lambda (w) (eq (lsp--client-server-id (lsp--workspace-client w)) 'jdtls))
                           (lsp--session-workspaces (lsp-session)))))
     (user-error "Kein JDT.LS aktiv -- erst eine .java-Datei oeffnen und JDT.LS importieren lassen (Modeline/M-x lsp), oder den Jetty-Weg nehmen: SPC m R (mvn exec:java)"))
-  (let* ((wd (+idea--expand-wd cfg))
-         ;; ent-dev-conf (o.ae.) VOR den JDT-Classpath haengen, damit
-         ;; ent.application.properties (ent.db.server ...) im Classpath-Root liegt:
-         (extra (when wd
-                  (seq-filter #'file-directory-p
-                              (mapcar (lambda (d) (expand-file-name d wd))
-                                      +idea-extra-classpath-dirs))))
+  (let* ((configuration (current-window-configuration))
+         (source (current-buffer))
+         ;; Application-Configs enthalten normalerweise WORKING_DIRECTORY.
+         ;; Ohne Angabe ist der Reactor-Root zugleich Maven-Arbeitsverzeichnis.
+         (wd (or (+idea--expand-wd cfg) (+idea--project-root)))
          (tmpl (list :type "java" :request "launch" :name name
                      :mainClass   (plist-get cfg :main)
                      :projectName (plist-get cfg :module)
                      :vmArgs      (or (plist-get cfg :vmargs) "")
                      :cwd         wd
                      :env         (plist-get cfg :envs))))   ; alist (KEY . VALUE), von dap unterstuetzt
-    ;; Nur wenn Extra-Dirs existieren UND JDT den Basis-Classpath liefert, setzen wir
-    ;; :classPaths selbst (extra + aufgeloest). Sonst laesst dap-java ihn wie gehabt
-    ;; selbst aufloesen (dann ohne Extra-Dirs -> Fallback SPC m R nutzen).
-    (when extra
-      (when-let ((resolved (+idea--resolve-classpath (plist-get cfg :main)
-                                                     (plist-get cfg :module))))
-        (setq tmpl (plist-put tmpl :classPaths
-                              (vconcat (apply #'vector extra) resolved)))))
-    (dap-debug (if debug tmpl (append tmpl (list :noDebug t))))))
+    ;; `dap-java' loest ohne :classPaths ueber das bei JDT.LS haengende
+    ;; `resolveClasspath' auf. Maven liefert dieselben Runtime-JARs plus die
+    ;; frischen Reactor-target/classes ohne LSP-Request.
+    (+idea--sync-extra-classpath-resources wd)
+    (setq tmpl (plist-put tmpl :classPaths (+idea--maven-classpath-for-dap wd)))
+    (dap-debug (if debug tmpl (append tmpl (list :noDebug t))))
+    ;; `dap-debug' legt die Session synchron an. Erst danach existiert ihr
+    ;; Ausgabe-Buffer, den wir wie den Maven-Output maximieren koennen.
+    (let ((session (ignore-errors (dap--cur-session))))
+      (+dap--show-output session configuration source)
+      ;; Einige Java-Debug-Adapter oeffnen ihren Terminal-/Output-Buffer erst
+      ;; nach ihrer asynchronen `launch'-Antwort. Er erschien dadurch ein
+      ;; zweites Mal als unterer Side-Buffer NACH dem ersten Maximieren.
+      ;; Einmal kurz danach erneut maximieren beseitigt genau diesen Split,
+      ;; ohne die manuell ueber `SPC d v' etc. geoeffneten Debug-Paneele
+      ;; dauerhaft zu unterdruecken.
+      (run-at-time 0.5 nil #'+dap--show-output session configuration source))))
 
 (defun +idea--pick-config ()                             ; Picker: Name -> Plist
   (let* ((configs (+idea-run-configs)))
@@ -650,7 +839,7 @@ inkrementellem \"Build\" vor dem Run. Test-Code wird uebersprungen."
   "CMD im *compilation*-Buffer ausfuehren; NUR bei Erfolg ON-SUCCESS (0-arg) aufrufen.
 So startet der Run (dap) erst, wenn der Vor-Build fehlerfrei durchlief -- wie IntelliJ,
 das bei Build-Fehlern den Start abbricht und die Fehler zeigt."
-  (let ((buf (compilation-start cmd)))
+  (let ((buf (+mvn/compile cmd)))
     (letrec ((fn (lambda (b status)
                    (when (eq b buf)
                      (remove-hook 'compilation-finish-functions fn)
@@ -744,7 +933,7 @@ Phase 2: im Modul-Arbeitsverzeichnis ueber exec:java starten (Env + MAVEN_OPTS =
       (user-error "Arbeitsverzeichnis existiert nicht: %s" default-directory))
     (when +idea-build-dependencies
       (message "Baue zuerst abhaengige Module (mvn -am install) -- das kann beim ersten Mal dauern ..."))
-    (compile (+idea--mvn-command cfg debug))
+    (+mvn/compile (+idea--mvn-command cfg debug))
     (when debug
       (message "JDWP auf :5005 -- sobald Jetty laeuft, mit `SPC m a' (+idea/attach) verbinden."))))
 
@@ -938,6 +1127,45 @@ oberster Ebene -- wie in lsp-java -- ergibt immer `nil' und meldet faelschlich
         (delq 'controls dap-auto-configure-features)))
 
 (after! dap-ui
+  ;; `dap-ui-locals' rendert beim Session-Start erwartungsgemaess zunaechst
+  ;; "Nothing to display": zu diesem Zeitpunkt hat dap-mode den Stackframe noch
+  ;; nicht vom Adapter erhalten. Anschliessend nutzt upstream nur
+  ;; `lsp-treemacs-generic-update'. Das aktualisiert den bereits leeren,
+  ;; versteckten Treemacs-Root und kann ihn (besonders mit dap-java/mehreren
+  ;; Thread-Events) leer/eingeklappt lassen. Fehler dabei werden in
+  ;; `lsp-treemacs-generic-refresh' zudem still geschluckt. Der Java-Adapter
+  ;; liefert die Daten aber: im angehaltenen Frame kommt ein Scope "Local".
+  ;;
+  ;; Nach `dap-stack-frame-changed-hook' ist der Frame garantiert gesetzt
+  ;; (dap-mode.el setzt ihn direkt VOR diesem Hook). Ein kurzer Delay laesst
+  ;; noch ausstehende Thread-/Scope-Antworten ankommen; danach initialisieren
+  ;; wir den Locals-Tree vollstaendig neu statt nur seinen alten Root zu
+  ;; aktualisieren. Das macht die Variablen am Breakpoint stabil sichtbar.
+  (defvar +dap--locals-render-timer nil
+    "Timer fuer das vollstaendige Neurendern der DAP-Locals nach einem Halt.")
+
+  (defun +dap/refresh-locals-at-stop (session)
+    "Locals nach dem vollstaendig eingetroffenen Stackframe neu rendern."
+    (when (timerp +dap--locals-render-timer)
+      (cancel-timer +dap--locals-render-timer))
+    (setq +dap--locals-render-timer
+          (run-at-time
+           0.35 nil
+           (lambda (stopped-session)
+             (setq +dap--locals-render-timer nil)
+             (when (and (eq stopped-session (ignore-errors (dap--cur-session)))
+                        (+dap--halted-p)
+                        (buffer-live-p (get-buffer dap-ui--locals-buffer)))
+               (with-current-buffer dap-ui--locals-buffer
+                 (lsp-treemacs-render
+                  (dap-ui-locals-get-data)
+                  " Locals "
+                  dap-ui-locals-expand-depth
+                  dap-ui--locals-buffer))))
+           session)))
+
+  (add-hook 'dap-stack-frame-changed-hook #'+dap/refresh-locals-at-stop)
+
   (defun +dap--halted-p ()
     "Non-nil, wenn die aktuelle Debug-Session wirklich an einem Breakpoint steht."
     (let ((session (ignore-errors (dap--cur-session))))
@@ -1111,7 +1339,7 @@ Aufrufstellen einer Aenderung im aktuellen Modul (Downstream)."
          (cmd (format "mvn -Pent-dev %s %s-Dmaven.test.skip=true compile"
                       +idea--mvn-ssl-flags pl)))
     (message "Projekt pruefen: %s ..." (if mod (format "Modul %s + Dependents" mod) "ganzer Reactor"))
-    (compile cmd)))
+    (+mvn/compile cmd)))
 
 ;;; --------------------------------------------------------------------------
 ;;; 5. Interface <-> Implementierung
@@ -1150,16 +1378,31 @@ Aufrufstellen einer Aenderung im aktuellen Modul (Downstream)."
 ;;; --------------------------------------------------------------------------
 ;; Passwoerter NICHT hier hinterlegen, sondern in ~/.authinfo(.gpg). Beispiel:
 ;;   machine localhost port 5432 login USER password GEHEIM
-;; Ports gem. Run-Config-Envs: ent.db=5432, bas.db=5433 (Guide-Client: bas.db user=sa db=magellan).
+;; Ports gem. Run-Config-Envs: ent.db=5432, bas.db=5433; die Kundenversionen
+;; liegen gemeinsam auf 5440 (Guide-Client: bas.db user=sa db=magellan).
 
 (defvar +pg-profiles
   '(("ENT - Postgres (5432)"        . "user=ent host=localhost port=5432 dbname=Entscheidungen")
     ("BAS - Postgres (5433)"        . "user=ent host=localhost port=5433 dbname=EntscheidungenBasis")
+    ("ENT - Kundenversion - Entscheidungen (5440)"
+     . "user=ent host=localhost port=5440 dbname=Entscheidungen")
+    ("ENT - Kundenversion - Basis (5440)"
+     . "user=ent host=localhost port=5440 dbname=EntscheidungenBasis")
     ("Guide-Client - magellan (5432)" . "user=sa host=localhost port=5432 dbname=magellan"))
   "Benannte Postgres-Verbindungen, analog den IntelliJ-DataSources.
 Passwoerter stehen bewusst NICHT hier, sondern in ~/.authinfo(.gpg) (auth-source),
 damit kein Klartext ins Git gelangt. Passendes authinfo-Format:
   machine localhost port 5432 login ent password GEHEIM")
+
+;; `defvar' laesst einen im bereits laufenden Daemon vorhandenen Wert unveraendert.
+;; Damit neue Standardprofile auch nach `eval-buffer'/`load!' sofort erscheinen
+;; (ohne Emacs-Neustart), nur diese beiden Eintraege idempotent nachtragen.
+(dolist (profile
+         '(("ENT - Kundenversion - Entscheidungen (5440)"
+            . "user=ent host=localhost port=5440 dbname=Entscheidungen")
+           ("ENT - Kundenversion - Basis (5440)"
+            . "user=ent host=localhost port=5440 dbname=EntscheidungenBasis")))
+  (setf (alist-get (car profile) +pg-profiles nil nil #'equal) (cdr profile)))
 
 ;; --------------------------------------------------------------------------
 ;; WICHTIG: pg.el 0.67 hat in `pg-connect/string' einen Bug (`string-bytes' auf
@@ -1775,6 +2018,16 @@ Fallback: Elternknoten bzw. NODE selbst."
       (treesit-node-parent node)
       node))
 
+(defun +java-final--in-interface-p (node)
+  "Non-nil, wenn NODE innerhalb einer Java-Interface-Deklaration liegt.
+Parameter in Interface-Methoden sind implizit Teil eines Vertrags. Dort sollen
+keine `final'-Hinweise erscheinen -- anders als bei implementiertem Code in
+Klassen, in dem die Warnung weiterhin sinnvoll ist."
+  (treesit-parent-until
+   node
+   (lambda (parent)
+     (string= (treesit-node-type parent) "interface_declaration"))))
+
 (defvar +java-final--assign-query
   "(assignment_expression left: (identifier) @a) (update_expression (identifier) @u)"
   "tree-sitter-Query: Zuweisungsziele (=, +=, ...) sowie ++/-- .")
@@ -1796,7 +2049,8 @@ werden uebersprungen (sie koennen ja nicht `final' sein)."
     (when root
       (dolist (cap (treesit-query-capture root +java-final--query))
         (let ((node (cdr cap)))
-          (unless (+java-final--has-final node)
+          (unless (or (+java-final--has-final node)
+                      (+java-final--in-interface-p node))
             (let* ((name  (+java-final--name node))
                    (scope (+java-final--scope node))
                    (skey  (treesit-node-start scope))
@@ -1846,6 +2100,182 @@ auf `info' fuer die dezente (IntelliJ-Weak-Warning-artige) Darstellung."
   (setq +java-final-enable (not +java-final-enable))
   (when (bound-and-true-p flycheck-mode) (flycheck-buffer))
   (message "final-Warnungen: %s" (if +java-final-enable "AN" "AUS")))
+
+;;; --------------------------------------------------------------------------
+;;; Typ-Vorschlaege auch bei Syntaxfehlern in der Datei
+;;; --------------------------------------------------------------------------
+;; PROBLEM: `textDocument/completion' laeuft in JDT.LS ueber den AST der aktuellen
+;; Datei. Ist die Datei nicht parsebar -- z.B. weil ein Konstruktor-Parameter noch
+;; fehlt, den man ja gerade erst per Dependency Injection ergaenzen will -- liefert
+;; JDT.LS an der Cursorstelle fast keine Kandidaten mehr (im Extremfall nur die
+;; eigene Klasse). IntelliJ hat hier eine robustere Fehlerkorrektur im Editor-Parser.
+;;
+;; LOESUNG: `workspace/symbol' fragt den INDEX ab, nicht den AST der Datei -- das
+;; funktioniert nachweislich auch bei kaputtem Syntaxbaum (empirisch: 558 Treffer
+;; fuer "Perso", waehrend die normale Completion nur 1 Kandidaten lieferte). Daraus
+;; wird hier eine zweite Completion-Quelle gebaut und per `cape-capf-super' MIT der
+;; normalen LSP-Completion zusammengefuehrt. Ergebnis: Typnamen stehen immer zur
+;; Verfuegung, die regulaeren (kontextgenauen) LSP-Vorschlaege bleiben erhalten.
+;;
+;; Damit das nicht ins Rauschen kippt, greift die Quelle nur bei einem Praefix, das
+;; wie ein Typ aussieht (Grossbuchstabe am Anfang, min. 2 Zeichen) und nicht nach
+;; einem Punkt (dort will man Member, keine Typen). Der fehlende `import' wird beim
+;; Uebernehmen automatisch ergaenzt -- genau wie bei der normalen Completion.
+
+(defvar +java-type-capf-enable t
+  "Wenn non-nil, Typnamen zusaetzlich aus dem JDT.LS-Index vorschlagen.
+Nutzt `workspace/symbol' und funktioniert daher auch dann, wenn die Datei wegen
+eines Syntaxfehlers nicht parsebar ist.")
+
+(defconst +java-type-capf--kinds '(5 10 11 23)
+  "LSP-SymbolKinds, die als Typ gelten: Class, Enum, Interface, Struct.")
+
+(defvar +java-type-capf--cache nil
+  "Cache der letzten Index-Abfrage: (PRAEFIX . SYMBOLE).
+Wird bei laengerem Praefix lokal weitergefiltert, statt neu anzufragen.")
+
+(defun +java-type-capf--symbols (prefix)
+  "Typ-Symbole aus dem JDT.LS-Index fuer PREFIX (mit lokalem Cache)."
+  (let ((cached-prefix (car +java-type-capf--cache)))
+    (unless (and cached-prefix
+                 (string-prefix-p cached-prefix prefix t)
+                 (>= (length prefix) (length cached-prefix)))
+      (setq +java-type-capf--cache
+            (cons prefix
+                  (seq-filter
+                   (lambda (sym) (memq (lsp-get sym :kind) +java-type-capf--kinds))
+                   (append (ignore-errors
+                             (lsp-request "workspace/symbol" (list :query prefix)))
+                           nil)))))
+    (cdr +java-type-capf--cache)))
+
+(defun +java-type-capf--package ()
+  "Paket der aktuellen Datei (oder nil)."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward "^[ \t]*package[ \t]+\\([^;]+\\);" nil t)
+      (string-trim (match-string-no-properties 1)))))
+
+(defun +java-type-capf--import-needed-p (fqn simple)
+  "Non-nil, wenn FQN als `import' fehlt und noetig ist.
+Nicht noetig bei `java.lang', bei gleichem Paket, bereits vorhandenem Import
+sowie wenn schon ein anderer Import denselben einfachen Namen belegt (dann wuerde
+ein zweiter Import den Code brechen -- man muss dort voll qualifizieren)."
+  (let ((package (or (file-name-directory (replace-regexp-in-string "\\." "/" fqn)) "")))
+    (and (not (string-prefix-p "java.lang." fqn))
+         (not (equal (directory-file-name package)
+                     (replace-regexp-in-string
+                      "\\." "/" (or (+java-type-capf--package) ""))))
+         (save-excursion
+           (goto-char (point-min))
+           (not (re-search-forward
+                 (format "^[ \t]*import[ \t]+\\(?:static[ \t]+\\)?\\(?:%s\\|[^;]+\\.%s\\)[ \t]*;"
+                         (regexp-quote fqn) (regexp-quote simple))
+                 nil t))))))
+
+(defun +java-type-capf--add-import (fqn simple)
+  "`import FQN;' einfuegen, falls noetig -- nach dem letzten Import, sonst nach `package'."
+  (when (+java-type-capf--import-needed-p fqn simple)
+    (save-excursion
+      (goto-char (point-min))
+      (cond
+       ((re-search-forward "^[ \t]*import[ \t]+[^;]+;[ \t]*$" nil t)
+        ;; hinter den letzten Import springen:
+        (while (re-search-forward "^[ \t]*import[ \t]+[^;]+;[ \t]*$" nil t))
+        (end-of-line)
+        (insert (format "\nimport %s;" fqn)))
+       ((re-search-forward "^[ \t]*package[ \t]+[^;]+;[ \t]*$" nil t)
+        (end-of-line)
+        (insert (format "\n\nimport %s;" fqn)))
+       (t (goto-char (point-min))
+          (insert (format "import %s;\n" fqn)))))))
+
+(defun +java-type-capf ()
+  "completion-at-point-Quelle fuer Typnamen aus dem JDT.LS-Index.
+Funktioniert auch bei Syntaxfehlern in der Datei, weil `workspace/symbol' den
+Index abfragt statt den AST des Buffers."
+  (when (and +java-type-capf-enable
+             (bound-and-true-p lsp-mode)
+             (derived-mode-p 'java-mode 'java-ts-mode))
+    (when-let* ((bounds (bounds-of-thing-at-point 'symbol))
+                (beg (car bounds))
+                (end (cdr bounds))
+                (prefix (buffer-substring-no-properties beg end)))
+      ;; Nur bei typ-artigem Praefix und nicht nach einem Punkt (dort: Member):
+      (when (and (>= (length prefix) 2)
+                 (let ((c (aref prefix 0))) (and (>= c ?A) (<= c ?Z)))
+                 (not (eq (char-before beg) ?.)))
+        (let ((table (make-hash-table :test 'equal)))
+          (dolist (sym (+java-type-capf--symbols prefix))
+            (let* ((name (lsp-get sym :name))
+                   (package (lsp-get sym :containerName)))
+              (unless (gethash name table)
+                (puthash name (or package "") table))))
+          (when (> (hash-table-count table) 0)
+            (list beg end
+                  (let (names)
+                    (maphash (lambda (name _) (push name names)) table)
+                    (sort names #'string<))
+                  :exclusive 'no
+                  :annotation-function
+                  (lambda (name)
+                    (when-let ((package (gethash name table)))
+                      (concat "  " package)))
+                  :company-kind (lambda (_) 'class)
+                  :exit-function
+                  (lambda (name status)
+                    (when (memq status '(finished exact))
+                      (when-let ((package (gethash name table)))
+                        (unless (string-empty-p package)
+                          (+java-type-capf--add-import
+                           (concat package "." name) name))))))))))))
+
+(defun +java-type-capf--dedup (capf)
+  "CAPF so umhuellen, dass doppelte Kandidaten nur EINMAL erscheinen.
+Liefern LSP und Index denselben Typ, taucht er sonst zweimal im Popup auf.
+`delete-dups' vergleicht Strings ohne Text-Properties und behaelt den ERSTEN
+Treffer -- das ist der LSP-Kandidat mit seinen Zusatzinfos (u.a. Import-Edits)."
+  (lambda ()
+    (when-let* ((res (funcall capf))
+                (table (nth 2 res)))
+      (append (list (nth 0 res) (nth 1 res)
+                    (lambda (str pred action)
+                      (if (eq action t)
+                          (delete-dups (copy-sequence (all-completions str table pred)))
+                        (complete-with-action action table str pred))))
+              (nthcdr 3 res)))))
+
+(defun +java-type-capf--install ()
+  "Typ-Quelle mit der LSP-Completion zusammenfuehren (statt sie zu ersetzen)."
+  (when (and +java-type-capf-enable
+             (derived-mode-p 'java-mode 'java-ts-mode)
+             (fboundp 'cape-capf-super))
+    (setq-local
+     completion-at-point-functions
+     (cons (+java-type-capf--dedup
+            (cape-capf-super #'lsp-completion-at-point #'+java-type-capf))
+           (remq #'lsp-completion-at-point completion-at-point-functions)))))
+
+;; `lsp-completion-mode' setzt `completion-at-point-functions' beim Aktivieren --
+;; darum ERST danach zusammenfuehren, sonst wird unsere Quelle wieder entfernt.
+(add-hook 'lsp-completion-mode-hook #'+java-type-capf--install)
+
+;; Bereits geoeffnete Java-Buffer nachziehen (der Hook oben feuert nur beim
+;; Aktivieren von `lsp-completion-mode', also nicht in laufenden Buffern):
+(dolist (buf (buffer-list))
+  (with-current-buffer buf
+    (when (and (bound-and-true-p lsp-completion-mode)
+               (derived-mode-p 'java-mode 'java-ts-mode))
+      (+java-type-capf--install))))
+
+;;;###autoload
+(defun +java/toggle-type-completion ()
+  "Typ-Vorschlaege aus dem JDT.LS-Index an/aus schalten (wirkt in neuen Buffern)."
+  (interactive)
+  (setq +java-type-capf-enable (not +java-type-capf-enable))
+  (setq +java-type-capf--cache nil)
+  (message "Typ-Vorschlaege aus dem Index: %s"
+           (if +java-type-capf-enable "AN" "AUS")))
 
 ;;; --------------------------------------------------------------------------
 ;;; Methodensuche inkl. Dependencies (Quellprojekte)  --  SPC f M

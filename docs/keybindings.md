@@ -129,6 +129,18 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 | `o p` | `+treemacs/toggle` | Projekt-Sidebar (Treemacs) -- Breite passt sich automatisch dem laengsten sichtbaren Eintrag an (bis `+treemacs-max-width`, Default 70) |
 | `g w` | `magit-worktree` | Git-Worktrees verwalten |
 
+## Live Templates / Snippets
+
+Die 73 IntelliJ Live Templates (Java, Liquibase, GC_Liquibase, Kotlin, xsl) sind
+uebernommen -- Details und komplette Kuerzelliste in [live-templates.md](live-templates.md).
+
+| Taste | Befehl | Beschreibung |
+|-------|--------|--------------|
+| `TAB` (Insert) | `yas-expand` | Kuerzel vor dem Cursor expandieren (z.B. `logger`, `momo`, `sod_cs`) |
+| `TAB` / `S-TAB` | -- | im laufenden Template zum naechsten/vorherigen Feld |
+| `SPC i s` | `yas-insert-snippet` | alle im Buffer verfuegbaren Snippets durchsuchen |
+| `M-x yas-new-snippet` | -- | eigenes Snippet als Datei anlegen (in Doom nicht gebunden) |
+
 ## LSP/Navigation (Doom-Standard, `SPC c`)
 
 | Taste | Beschreibung |
@@ -145,6 +157,10 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 | `SPC c B` | **Projekt pruefen / Build Project** (`+java/check-project`): ganzen Reactor kompilieren, ALLE Fehler projektweit (`]e`/`[e` navigieren); `C-u` = nur Modul + Dependents |
 | `SPC c n` | **Neu: Klasse/Interface/Enum ...** (`+java/new-type`, wie IntelliJ "New"): Typ waehlen (Java-Klasse/Interface/Enum/Record/Annotation, Kotlin-Klasse/Data-Class/Interface/Object/Enum) -> Datei mit Template im aktuellen Verzeichnis anlegen. Paket wird aus dem Pfad (src/main\|test/java\|kotlin) abgeleitet; Name darf ein relatives Unterpaket enthalten (`sub.paket.Name` -> erzeugt Ordner). Auch im Baum (Treemacs `N` bzw. `c j`) ins ausgewaehlte Verzeichnis. |
 | `SPC c a` | **Code-Actions / Quick-Fixes** (IntelliJ Alt+Enter): Fixes fuer Warnungen/Fehler an der Cursor-Stelle vorschlagen und auswaehlen. Verfuegbare Fixes werden als Lightbulb in der Modeline angezeigt |
+| `SPC c w` / `SPC c W` | **Nächste / vorherige Warnung dieser Datei**: springt ausschließlich zwischen Flycheck-Warnungen im aktuellen Buffer (keine Fehler, Infos oder Treffer aus anderen Dateien); zyklisch am Ende/Anfang |
+| `SPC c e` / `SPC c E` | **Nächster / vorheriger Fehler dieser Datei**: springt ausschließlich zwischen Flycheck-Fehlern im aktuellen Buffer (keine Warnungen, Infos oder Treffer aus anderen Dateien); zyklisch am Ende/Anfang |
+| `SPC c x` | **LSP-Diagnosen dieser Datei**: Consult-Liste nur für den aktuellen Buffer |
+| `SPC c X` | **LSP-Diagnosen Projekt/Workspace** (`+default/diagnostics`): bisherige Gesamtansicht über alle Dateien |
 | `SPC c f` | **Format nach IntelliJ-Profil** (`+format/intellij`): Region falls aktiv, sonst Buffer -- Java/Kotlin via JDT-Profil, sonst apheleia-Fallback |
 | `SPC c F` | **Format buffer/region** (`+format/region-or-buffer`, Dooms apheleia-Default) |
 | `SPC j d` | **Zur Definition** (direkt per LSP, `+java/jump-to-definition`) |

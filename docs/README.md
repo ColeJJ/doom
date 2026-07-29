@@ -10,8 +10,9 @@ Java, Spring, Maven und Kotlin (Projekt `entscheidungen`) IntelliJ-aehnlich mach
 - [`+java.el`](../+java.el) -- LSP/JDT-Kern, Maven, Run/Debug-Picker, Formatierung,
   Navigation, Code-Generierung, DB-Viewer, Profiler, Keybindings
 - [`+git.el`](../+git.el) -- Magit/Forge (GitLab), Worktrees, magit-todos
+- [`+snippets.el`](../+snippets.el) -- IntelliJ Live Templates als yasnippet-Snippets
 - [`formatter/gc-eclipse-format.xml`](../formatter/gc-eclipse-format.xml) -- Eclipse-Formatter-Profil (aus IntelliJ abgeleitet)
-- [`config.el`](../config.el) -- laedt `+java`/`+git` und enthaelt persoenliche Settings
+- [`config.el`](../config.el) -- laedt `+java`/`+git`/`+snippets` und enthaelt persoenliche Settings
 
 ## Inhaltsverzeichnis
 
@@ -24,6 +25,7 @@ Java, Spring, Maven und Kotlin (Projekt `entscheidungen`) IntelliJ-aehnlich mach
 7. [git.md](git.md) -- Magit, GitLab/Forge, Worktrees, pre-commit-Hook
 8. [keybindings.md](keybindings.md) -- vollstaendiges Shortcut-Cheat-Sheet
 9. [performance.md](performance.md) -- native-comp-Build + Daemon (schnell wie neovim)
+10. [live-templates.md](live-templates.md) -- IntelliJ Live Templates (Java, Liquibase, Kotlin)
 
 ## Schnellstart
 

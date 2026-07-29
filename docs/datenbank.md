@@ -48,12 +48,16 @@ Fuer den schnellsten Weg von "nichts offen" zu "Tabelle X ansehen":
 ## Profile pflegen
 
 In [`+java.el`](../+java.el), Variable `+pg-profiles` (Ports gem. Run-Config-Envs:
-ent.db=5432, bas.db=5433):
+ent.db=5432, bas.db=5433; Kundenversionen=5440):
 
 ```elisp
 (defvar +pg-profiles
   '(("ENT - Postgres (5432)" . "user=ent host=localhost port=5432 dbname=Entscheidungen")
     ("BAS - Postgres (5433)" . "user=USER host=localhost port=5433 dbname=DBNAME")
+  ("ENT - Kundenversion - Entscheidungen (5440)"
+   . "user=ent host=localhost port=5440 dbname=Entscheidungen")
+  ("ENT - Kundenversion - Basis (5440)"
+   . "user=ent host=localhost port=5440 dbname=EntscheidungenBasis")
     ("Guide-Client - magellan (5432)" . "user=sa host=localhost port=5432 dbname=magellan")))
 ```
 
@@ -68,6 +72,7 @@ Repos -- landet also nie im Git). Datei anlegen/ergaenzen:
 ```
 machine localhost port 5432 login ent password DEIN_PW
 machine localhost port 5433 login ent password DEIN_PW
+machine localhost port 5440 login ent password DEIN_PW
 ```
 
 Anschliessend Rechte einschraenken: `chmod 600 ~/.authinfo`.

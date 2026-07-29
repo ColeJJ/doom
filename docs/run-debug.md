@@ -11,6 +11,10 @@ also die einzige Pflegestelle.
   2. Aktion waehlen: **Run** (ohne Debugger) oder **Debug** (mit Debugger)
 - Start ueber `dap-java`: Main-Klasse, Modul, VM-Parameter, Env und Working-Dir
   werden aus der XML uebernommen.
+- Nach dem Start zeigt Doom den DAP-Ausgabepuffer (`*<Run-Name> out*`) im
+  **maximierten Fenster**, genau wie Maven-Ausgaben bei `SPC m c`. `q` stellt
+  die vorherige Code-Ansicht samt Fensteraufteilung wieder her. Das gilt fuer
+  **Run** und **Debug**, auch fuer `SPC r r` und `SPC m e` (Rerun).
 
 ## Fallback: Start ueber `mvn exec:java` (zuverlaessig fuer den Jetty-Starter)
 
@@ -62,9 +66,20 @@ Diese Datei kommt ueber das Maven-Profil **`ent-dev`** auf den Classpath: die
   bleibt bewusst `compile` (nicht `test`), sonst landen Test-Abhaengigkeiten wie
   h2/junit auf dem Laufzeit-Classpath -- das tut IntelliJ auch nicht.
 - **`SPC m r` (`+idea/run`, dap-java)**: JDT.LS/dap kennen das `ent-dev`-Profil
-  **nicht**. Damit es trotzdem wie IntelliJ laeuft, haengt `+idea--launch` die in
-  `+idea-extra-classpath-dirs` (Default `("src/test/resources/conf")`) gelisteten
-  Verzeichnisse **vorne** an den von JDT aufgeloesten Classpath.
+  **nicht**. Damit es trotzdem wie IntelliJ laeuft, spiegelt `+idea--launch` die
+  in `+idea-extra-classpath-dirs` (Default `("src/test/resources/conf")`) gelisteten
+  Ressourcen vor dem Start direkt nach `target/classes`. Dieses Verzeichnis liegt
+  bereits auf JDT.LS' Standard-Classpath.
+
+  Der Compile-Classpath wird einmalig und **offline** per
+  `mvn -o -Pent-dev dependency:build-classpath -DincludeScope=compile` ermittelt
+  und pro Modul gecacht. Der Compile-Scope ist erforderlich, weil
+  `sodalis-runtime`/`JettyStarterXML` im Webapp-POM den Scope `provided` hat,
+  aber fuer den lokalen Jetty-Start wie in IntelliJ vorhanden sein muss.
+  Zusaetzlich stehen die `target/classes` aller Reactor-Module vorne im
+  Classpath, damit lokale Änderungen ohne Installation nach `~/.m2` wirken.
+  Das umgeht `dap-java`/JDT.LS' blockierendes
+  `vscode.java.resolveClasspath` vollständig.
 
 Ohne diese Dateien bricht Spring mit
 `Could not resolve placeholder 'ent.db.server'` ab (im Log davor:
@@ -194,6 +209,12 @@ am Breakpoint automatisch die schwebende Toolbar ein (nur GUI, siehe unten).
 | `SPC d v` | `dap-ui-locals` | **Locals/Variablen** |
 | `SPC d x` | `dap-ui-expressions` | **Watches**-Fenster |
 | `SPC d k` | `dap-ui-breakpoints` | **Breakpoint-Liste** |
+
+Die Locals werden bei jedem Halt nach Eintreffen des Stackframes vollständig neu
+gerendert. Das umgeht einen `dap-ui`/`lsp-treemacs`-Fehler, bei dem der zunächst leere
+Treemacs-Root nach einem Thread-Event sichtbar blieb, obwohl der Java-Debug-Adapter den
+Scope `Local` bereits geliefert hatte. Falls kein Breakpoint aktiv ist, bleibt das Fenster
+korrekt leer.
 | `SPC d s` | `dap-ui-sessions` | laufende **Sessions** |
 | `SPC d f` | `dap-switch-stack-frame` | **Stack-Frame** wechseln |
 | `SPC d t` | `dap-switch-thread` | **Thread** wechseln |

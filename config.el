@@ -282,7 +282,132 @@ dahin springen (wie IntelliJ), sonst die uebliche Referenzliste. Ohne LSP: Fallb
 (map! :leader
       :desc "Projekt pruefen (alle Fehler)" "c B" #'+java/check-project)
 
-;; --- Fix fuer `SPC c x' (+default/diagnostics -> consult-lsp-diagnostics) ---
+;; --- Naechste/vorherige WARNUNG im aktuellen Buffer (SPC c w / SPC c W) ---
+;; `next-error' und `flycheck-next-error' nehmen auch Fehler/Infos sowie ggf.
+;; Compilation-Treffer aus anderen Dateien mit. Fuer die IntelliJ-artige
+;; Inspection-Navigation hier bewusst NUR Flycheck-Warnungen der aktuellen Datei
+;; verwenden (z.B. "Parameter x koennte final sein").
+(defun +diagnostics--warning-position (err)
+  "Buffer-Position der Flycheck-Warnung ERR oder nil bei ungueltiger Position."
+  (when-let ((line (flycheck-error-line err)))
+    (save-excursion
+      (goto-char (point-min))
+      (forward-line (1- line))
+      (move-to-column (max 0 (1- (or (flycheck-error-column err) 1))))
+      (point))))
+
+(defun +diagnostics--warnings ()
+  "Sortierte Liste aller Flycheck-Warnungen im aktuellen Buffer."
+  (sort
+   (seq-filter (lambda (err) (eq (flycheck-error-level err) 'warning))
+               (copy-sequence flycheck-current-errors))
+   (lambda (a b)
+     (< (+diagnostics--warning-position a)
+        (+diagnostics--warning-position b)))))
+
+(defun +diagnostics--goto-warning (backward)
+  "Zur naechsten Warnung springen; bei BACKWARD zur vorherigen.
+Die Suche bleibt im aktuellen Buffer und springt am Ende/Anfang zyklisch um."
+  (unless (bound-and-true-p flycheck-mode)
+    (user-error "Flycheck ist in diesem Buffer nicht aktiv"))
+  (let ((warnings (+diagnostics--warnings))
+        (origin (point)))
+    (unless warnings
+      (user-error "Keine Flycheck-Warnungen in dieser Datei"))
+    (let* ((candidates
+            (seq-filter
+             (lambda (err)
+               (let ((pos (+diagnostics--warning-position err)))
+                 (if backward (< pos origin) (> pos origin))))
+             warnings))
+           (target (if backward
+                       (car (last candidates))
+                     (car candidates)))
+           (wrapped (null target)))
+      (setq target (or target (if backward (car (last warnings)) (car warnings))))
+      (when (fboundp 'better-jumper-set-jump)
+        (better-jumper-set-jump))
+      (goto-char (+diagnostics--warning-position target))
+      (recenter)
+      (message "%s%s"
+               (if backward "Vorherige" "Naechste")
+               (concat " Warnung"
+                       (if wrapped " (zyklisch)" "")
+                       ": " (flycheck-error-message target))))))
+
+;;;###autoload
+(defun +diagnostics/next-warning ()
+  "Zur naechsten Flycheck-Warnung im aktuellen Buffer springen."
+  (interactive)
+  (+diagnostics--goto-warning nil))
+
+;;;###autoload
+(defun +diagnostics/previous-warning ()
+  "Zur vorherigen Flycheck-Warnung im aktuellen Buffer springen."
+  (interactive)
+  (+diagnostics--goto-warning t))
+
+(map! :leader
+      :desc "Naechste Warnung dieser Datei"  "c w" #'+diagnostics/next-warning
+      :desc "Vorherige Warnung dieser Datei" "c W" #'+diagnostics/previous-warning)
+
+;; --- Naechster/vorheriger FEHLER im aktuellen Buffer (SPC c e / SPC c E) ---
+;; Analog zur Warnungsnavigation oben, aber ausschliesslich fuer echte
+;; Flycheck-Fehler -- unabhaengig von `next-error' und dessen anderer Dateien.
+(defun +diagnostics--errors ()
+  "Sortierte Liste aller Flycheck-Fehler im aktuellen Buffer."
+  (sort
+   (seq-filter (lambda (err) (eq (flycheck-error-level err) 'error))
+               (copy-sequence flycheck-current-errors))
+   (lambda (a b)
+     (< (+diagnostics--warning-position a)
+        (+diagnostics--warning-position b)))))
+
+(defun +diagnostics--goto-error (backward)
+  "Zum naechsten Fehler springen; bei BACKWARD zum vorherigen.
+Die Suche bleibt im aktuellen Buffer und springt am Ende/Anfang zyklisch um."
+  (unless (bound-and-true-p flycheck-mode)
+    (user-error "Flycheck ist in diesem Buffer nicht aktiv"))
+  (let ((errors (+diagnostics--errors))
+        (origin (point)))
+    (unless errors
+      (user-error "Keine Flycheck-Fehler in dieser Datei"))
+    (let* ((candidates
+            (seq-filter
+             (lambda (err)
+               (let ((pos (+diagnostics--warning-position err)))
+                 (if backward (< pos origin) (> pos origin))))
+             errors))
+           (target (if backward (car (last candidates)) (car candidates)))
+           (wrapped (null target)))
+      (setq target (or target (if backward (car (last errors)) (car errors))))
+      (when (fboundp 'better-jumper-set-jump)
+        (better-jumper-set-jump))
+      (goto-char (+diagnostics--warning-position target))
+      (recenter)
+      (message "%s%s"
+               (if backward "Vorheriger" "Naechster")
+               (concat " Fehler"
+                       (if wrapped " (zyklisch)" "")
+                       ": " (flycheck-error-message target))))))
+
+;;;###autoload
+(defun +diagnostics/next-error ()
+  "Zum naechsten Flycheck-Fehler im aktuellen Buffer springen."
+  (interactive)
+  (+diagnostics--goto-error nil))
+
+;;;###autoload
+(defun +diagnostics/previous-error ()
+  "Zum vorherigen Flycheck-Fehler im aktuellen Buffer springen."
+  (interactive)
+  (+diagnostics--goto-error t))
+
+(map! :leader
+      :desc "Naechster Fehler dieser Datei"  "c e" #'+diagnostics/next-error
+      :desc "Vorheriger Fehler dieser Datei" "c E" #'+diagnostics/previous-error)
+
+;; --- LSP-Diagnosen: aktuelle Datei (SPC c x) / bisherige Gesamtansicht (SPC c X) ---
 ;; Der eingebaute Transformer formatiert jeden Eintrag mit "%-60.60s" -- also hart
 ;; auf 60 Zeichen abgeschnitten. Bei unseren tiefen Paketpfaden ist nach 60 Zeichen
 ;; erst ".../de/guidecom/entscheidun" erreicht: Klassenname UND Zeilennummer fallen
@@ -310,7 +435,47 @@ Zeigt `Dateiname:Zeile' gefolgt von der Meldung und dem (verkuerzten) Pfad."
        'consult--candidate (cons file diag)
        'consult--type (consult-lsp--diagnostics--severity-to-type diag))))
   (setq consult-lsp-diagnostics-transformer-function
-        #'+consult-lsp-diagnostics-transformer))
+        #'+consult-lsp-diagnostics-transformer)
+
+  (defun +consult-lsp-diagnostics-current-file ()
+    "LSP-Diagnosen nur der aktuell besuchten Datei als Consult-Liste anzeigen.
+Anders als `consult-lsp-diagnostics' bzw. `+default/diagnostics' werden keine
+Diagnosen der anderen Dateien im Workspace/Projekt angezeigt."
+    (interactive)
+    (unless buffer-file-name
+      (user-error "Der aktuelle Buffer besucht keine Datei"))
+    (unless (bound-and-true-p lsp-mode)
+      (user-error "LSP ist in dieser Datei nicht aktiv"))
+    (let* ((target (file-truename buffer-file-name))
+           (candidates
+            (seq-filter
+             (lambda (candidate)
+               (equal (file-truename
+                       (car (get-text-property 0 'consult--candidate candidate)))
+                      target))
+             ;; t = nur Workspace der aktuellen Datei; danach Dateifilter:
+             (consult-lsp--diagnostics--flatten-diagnostics
+              consult-lsp-diagnostics-transformer-function t))))
+      (unless candidates
+        (user-error "Keine LSP-Diagnosen in %s" (file-name-nondirectory target)))
+      (consult--read
+       candidates
+       :prompt (format "LSP-Diagnosen: %s " (file-name-nondirectory target))
+       :annotate (funcall consult-lsp-diagnostics-annotate-builder-function)
+       :require-match t
+       :history t
+       :category 'consult-lsp-diagnostics
+       :sort nil
+       :group (consult--type-group consult-lsp--diagnostics--narrow)
+       :narrow (consult--type-narrow consult-lsp--diagnostics--narrow)
+       :state (consult-lsp--diagnostics--state)
+       :lookup #'consult--lookup-candidate))))
+
+;; `SPC c x' war bisher `+default/diagnostics' (= gesamte LSP-Workspace-Diagnostik).
+;; Diese bisherige Logik liegt nun auf Shift-X; die schlanke Datei-Ansicht auf x.
+(map! :leader
+      :desc "LSP-Diagnosen dieser Datei" "c x" #'+consult-lsp-diagnostics-current-file
+      :desc "LSP-Diagnosen Projekt/Workspace" "c X" #'+default/diagnostics)
 
 
 ;; Open file in finder (macos)
@@ -613,6 +778,7 @@ rein projektlokale Dateisuche weiter `SPC s c' nutzen."
 ;; als bewaehrter `mvn exec:java'-Fallback bereit.
 (load! "+java")
 (load! "+git")
+(load! "+snippets")   ; IntelliJ Live Templates als yasnippet-Snippets
 
 
 ;; refresh im docker mode

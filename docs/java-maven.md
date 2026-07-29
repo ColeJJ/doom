@@ -71,6 +71,20 @@ Transient-Menue mit Flags und Goals (laeuft im `compile`-Buffer):
 - `e` freies Goal eingeben (Execute Maven Goal)
 - `u` Maven neu importieren (LSP)
 
+### Maven-Ausgabe als Vollbild (`q` zurueck zum Code)
+
+Alle Maven-Aufrufe -- `SPC m c`, `SPC m t`, das Maven-Menue (`SPC m m`), Rebuild
+und der Maven-Run (`SPC m R`) -- oeffnen ihre Ausgabe nicht mehr im unteren
+Side-Buffer. Stattdessen ersetzt der Compilation-Buffer die aktuelle Ansicht als
+maximales Fenster. Das bisherige Layout mit allen Splits, Buffern und Cursor-Positionen
+wird vorher gespeichert.
+
+- `q`: Ausgabe verlassen und die vorherige Code-Ansicht exakt wiederherstellen.
+- Der Maven-Prozess laeuft beim Verlassen weiter; der Ausgabe-Buffer bleibt über
+  `SPC b b` erneut erreichbar.
+- `]e` / `[e` bzw. `M-g n` / `M-g p`: nächster/vorheriger Compilerfehler.
+- `RET`: an die Fehlerstelle im Code springen.
+
 Das Modul wird automatisch aus dem Pfad der aktuellen Datei bestimmt (naechstes
 `pom.xml`), die Reactor-Wurzel aus dem **obersten** `pom.xml`.
 
@@ -136,6 +150,42 @@ Eingabefenster mit **Verlauf** und haeufigen Goals. Der getippte Text laeuft 1:1
 `mvn <goal>` im Reactor-Root, z.B. `clean install -DskipTests`. Mit `C-u SPC m t`
 nur im Modul der aktuellen Datei (`-pl <modul> -am`).
 
+## Typ-Vorschlaege auch bei Syntaxfehlern in der Datei
+
+Problem: `textDocument/completion` laeuft in JDT.LS ueber den **AST der aktuellen
+Datei**. Ist die Datei nicht parsebar -- z.B. weil im Konstruktor-Aufruf noch ein
+Parameter fehlt, den man ja gerade erst per Dependency Injection ergaenzen will --
+liefert JDT.LS an der Cursorstelle kaum noch Kandidaten. Gemessen in genau so einem
+Zustand: **1** Kandidat fuer das Praefix `Perso` (nur die eigene Klasse). IntelliJ hat
+hier eine robustere Fehlerkorrektur im Editor-Parser.
+
+Loesung in `+java.el`: `workspace/symbol` fragt den **Index** ab, nicht den AST --
+das funktioniert auch bei kaputtem Syntaxbaum (im selben Zustand gemessen: **558**
+Typen fuer `Perso`). Daraus wird eine zweite Completion-Quelle (`+java-type-capf`)
+gebaut und per `cape-capf-super` **mit** der normalen LSP-Completion zusammengefuehrt.
+Ergebnis: Typnamen stehen immer zur Verfuegung, die kontextgenauen LSP-Vorschlaege
+bleiben zusaetzlich erhalten.
+
+Details:
+
+- Greift nur bei einem **typ-artigen Praefix**: mindestens 2 Zeichen, beginnt mit
+  Grossbuchstaben, und **nicht** direkt nach einem Punkt (dort will man Member,
+  keine Typen). Das haelt normale Variablen-/Methoden-Completion frei von Rauschen.
+- Vorgeschlagen werden Klassen, Interfaces, Enums und Records (LSP-SymbolKinds 5, 10,
+  11, 23). Die Annotation rechts zeigt das **Paket**.
+- Der fehlende `import` wird beim Uebernehmen automatisch ergaenzt -- hinter den
+  letzten Import bzw. hinter die `package`-Zeile. Uebersprungen wird er bei
+  `java.lang`, bei gleichem Paket, bei bereits vorhandenem Import und bei einer
+  **Namenskollision** (ein anderer Import belegt denselben einfachen Namen -- dort
+  muss man voll qualifizieren, ein zweiter Import wuerde den Code brechen).
+- Doppelte Eintraege (LSP und Index liefern denselben Typ) werden entfernt; behalten
+  wird der LSP-Kandidat mit seinen Zusatzinfos.
+- Abschalten: `M-x +java/toggle-type-completion` bzw. dauerhaft
+  `+java-type-capf-enable` auf nil.
+
+Wenn die Completion mal gar nicht aufpoppt: `C-SPC` erzwingt sie. Kommen dann immer
+noch keine Kandidaten, ist der LSP-Workspace das Problem -> `SPC m L` (neu verbinden).
+
 ## Imports & Generierung
 
 - Imports ordnen: `SPC m o` (`lsp-java-organize-imports`); zusaetzlich automatisch
@@ -188,6 +238,9 @@ nicht `final` sein. (Feld-/Array-Ziele wie `this.x =` oder `arr[i] =` zaehlen da
 nicht als Reassignment der lokalen Variablen.) LÃ¤uft in `java-mode` **und** `java-ts-mode` (der Java-Parser wird bei
 Bedarf angelegt). Der Checker hÃ¤ngt hinter dem `lsp`-Checker â die normalen
 LSP-Diagnosen bleiben also fÃ¼hrend, die final-Hinweise kommen zusÃ¤tzlich dazu.
+Parameter und lokale Variablen innerhalb von **Interfaces** werden bewusst
+uebersprungen: Interface-Methoden beschreiben einen Vertrag; dort sind
+`Parameter x koennte final sein`-Hinweise nicht erwuenscht.
 
 **Steuerung:**
 
