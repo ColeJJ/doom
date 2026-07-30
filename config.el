@@ -574,10 +574,14 @@ Diagnosen der anderen Dateien im Workspace/Projekt angezeigt."
       idle-update-delay 1.0                        ; UI-Elemente seltener aktualisieren
       jit-lock-defer-time 0)                       ; Fontification waehrend Eingabe aufschieben
 
-;; GC fuer lange Sitzungen entspannen: gcmh sammelt im Leerlauf; eine hoehere Schwelle
-;; reduziert die Anzahl der GC-Pausen waehrend der aktiven Arbeit.
+;; GC fuer lange LSP-Sitzungen: Ein Sample zeigte `gcmh_idle_garbage_collect'
+;; als dominanten Emacs-CPU-Verbraucher. Die automatische kurze Idle-Phase kann
+;; zwischen LSP-Antworten feuern und dadurch Completion/Shortcuts sichtbar
+;; ausbremsen. Seltener und erst nach einer echten Ruhephase sammeln.
 (after! gcmh
-  (setq gcmh-high-cons-threshold (* 256 1024 1024)))  ; 256 MB statt Default
+  (setq gcmh-high-cons-threshold (* 512 1024 1024)
+        gcmh-idle-delay 60
+        gcmh-auto-idle-delay-factor 20))
 
 ;; ---- native-compilation (nur mit native-comp-Build, z.B. emacs-plus@30) ----
 ;; DER groesste Performance-Faktor: Elisp wird zu nativem Maschinencode kompiliert

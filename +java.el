@@ -22,6 +22,20 @@
 ;;; --------------------------------------------------------------------------
 
 (after! lsp-java
+  ;; lsp-java startet JDT.LS upstream mit `-Dlog.protocol=true' und
+  ;; `-Dlog.level=ALL'. Das ist Debug-Logging und erzeugt bei einem grossen
+  ;; Reactor unnoetigen Protokoll-I/O. Fehler bleiben im normalen Eclipse-Log
+  ;; erhalten; nur der sehr gesprächige Protokollkanal wird abgeschaltet.
+  (defun +java--quiet-jdtls-command-a (command)
+    "JDT.LS-DEBUG-Flags aus dem von lsp-java gebauten Startkommando entfernen."
+    (seq-remove
+     (lambda (arg)
+       (member arg '("-Dlog.protocol=true" "-Dlog.level=ALL"
+                     "--jvm-arg=-Dlog.protocol=true" "--jvm-arg=-Dlog.level=ALL")))
+     command))
+  (advice-remove 'lsp-java--ls-command #'+java--quiet-jdtls-command-a)
+  (advice-add 'lsp-java--ls-command :filter-return #'+java--quiet-jdtls-command-a)
+
   ;; JDT.LS mit Java 21 starten, Projekt aber gegen Java 17 kompilieren:
   (setq lsp-java-java-path
         "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin/java"
@@ -30,10 +44,17 @@
           (:name "JavaSE-21" :path "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home")]
         ;; Genug Heap fuer das grosse Reactor-Projekt:
         lsp-java-vmargs '("-XX:+UseParallelGC" "-Xmx4G" "-Xms100m")
-        lsp-java-maven-download-sources t              ; Quellen mitladen (Go-to-Source)
-        lsp-java-references-code-lens-enabled t         ; "N references" ueber Methoden
-        lsp-java-implementations-code-lens-enabled t    ; "N implementations" ueber Interfaces
-        lsp-java-save-actions-organize-imports t))      ; Imports beim Speichern ordnen
+        ;; Keine Downloads/Index-Extras im Hintergrund: Quellen bleiben aus ~/.m2
+        ;; anspringbar, werden aber nicht beim Maven-Import nachgeladen.
+        lsp-java-maven-download-sources nil
+        ;; Diese beiden Optionen lassen JDT.LS CodeLens-Daten erzeugen, auch wenn
+        ;; `lsp-lens-enable' im Client aus ist. Bei 4.500 Java-Dateien ist das
+        ;; reine Hintergrundlast; bei Bedarf gibt es die Navigation per Shortcut.
+        lsp-java-references-code-lens-enabled nil
+        lsp-java-implementations-code-lens-enabled nil
+        ;; Imports bewusst nur auf Zuruf mit `SPC m o' ordnen. Beim Speichern
+        ;; kann die Action sonst mit Diagnostics/Completion um den Server kämpfen.
+        lsp-java-save-actions-organize-imports nil))
 
 ;; --- Generierte Sourcen (swagger/openapi etc.) als Source-Root in .classpath ---
 ;; JDT.LS/m2e registriert von Code-Generatoren (z.B. swagger-codegen) erzeugte Ordner
@@ -132,13 +153,153 @@ Workspace neu gestartet (noetig, damit die .classpath neu gelesen wird); mit Pra
                (string-join changed ", "))
       (dolist (w (+java--jdtls-workspaces)) (ignore-errors (lsp-workspace-restart w)))))))
 
-;; Nach echtem "Update Project Configuration" (regeneriert .classpath -> unser Eintrag
-;; ist weg) verzoegert nachziehen (der Update ist asynchron). Restart erfolgt nur, wenn
-;; wirklich etwas ergaenzt wurde.
+;; --- Kotlin-Outputs fuer JDT.LS ------------------------------------------------
+;; In diesem Maven-Reactor liegen einige Kotlin-Dateien absichtlich unter
+;; src/main/java. IntelliJ kompiliert sie inkrementell und stellt die Klassen dem
+;; Java-Compiler direkt bereit. JDT.LS versteht Kotlin dagegen nicht; ohne einen
+;; expliziten Klassenordner im Eclipse-Classpath meldet es deshalb in abhaengigen
+;; Java-Modulen falsche "cannot be resolved"-Fehler fuer existente Kotlin-Typen.
+;; Die Maven-Kompilierung erzeugt die .class-Dateien in target/classes. Diese
+;; Funktion traegt genau diesen Output als lokale Library bei Maven-Abhaengern ein.
+;; .classpath ist nicht versioniert; nach `SPC m u' ggf. erneut `SPC m K' ausfuehren.
+
+(defun +java--pom-depends-on-p (module-dir artifact)
+  "Non-nil, wenn MODULE-DIRs POM von Maven-ARTIFACT abhaengt."
+  (let ((pom (expand-file-name "pom.xml" module-dir)))
+    (when (file-readable-p pom)
+      (with-temp-buffer
+        (insert-file-contents pom)
+        (when-let ((tree (ignore-errors
+                           (libxml-parse-xml-region (point-min) (point-max)))))
+          (seq-some
+           (lambda (dependency)
+             (when-let ((id (car (dom-by-tag dependency 'artifactId))))
+               (equal (string-trim (dom-text id)) artifact)))
+           (dom-by-tag tree 'dependency)))))))
+
+(defun +java--module-has-kotlin-p (module-dir)
+  "Non-nil, wenn MODULE-DIR Kotlin-Quellen im Maven-Quellbaum enthält."
+  (let ((src (expand-file-name "src/main" module-dir)))
+    (and (file-directory-p src)
+         (directory-files-recursively src "\\.kt\\'" nil nil t))))
+
+(defun +java--classpath-add-lib (module-dir lib)
+  "LIB als lokale Klassenbibliothek in MODULE-DIR/.classpath eintragen.
+Gibt t zurueck, wenn ein neuer Eintrag geschrieben wurde."
+  (let* ((cp (expand-file-name ".classpath" module-dir))
+         (rel (file-relative-name lib module-dir)))
+    (when (file-exists-p cp)
+      (with-temp-buffer
+        (insert-file-contents cp)
+        (goto-char (point-min))
+        (let ((existing (search-forward (format "kind=\"lib\" path=\"%s\"" rel) nil t))
+              lib-pos
+              output-pos)
+          (when existing
+            (setq lib-pos
+                  (save-excursion
+                    (goto-char (match-beginning 0))
+                    (line-beginning-position))))
+          (goto-char (point-min))
+          (when (re-search-forward "^[ \t]*<classpathentry kind=\"output\"" nil t)
+            (setq output-pos (match-beginning 0)))
+          ;; Eclipse erwartet den Output-Eintrag am Ende. Ein früherer Eintrag
+          ;; hinter `kind=output' wird verschoben statt still ignoriert.
+          (when (and existing output-pos (> existing output-pos))
+            (goto-char lib-pos)
+            (when (re-search-forward "</classpathentry>[ \t]*\n" nil t)
+              (delete-region lib-pos (point)))
+            (setq existing nil))
+          (unless existing
+          (goto-char (point-min))
+          (when (or (and output-pos (goto-char output-pos))
+                    (search-forward "</classpath>" nil t))
+            (insert (format (concat "\t<classpathentry kind=\"lib\" path=\"%s\">\n"
+                                    "\t\t<attributes>\n"
+                                    "\t\t\t<attribute name=\"optional\" value=\"true\"/>\n"
+                                    "\t\t</attributes>\n"
+                                    "\t</classpathentry>\n")
+                            rel))
+            (write-region (point-min) (point-max) cp nil 'silent)
+            t)))))))
+
+;;;###autoload
+(defun +java/ensure-kotlin-output-classpath (&optional no-restart)
+  "Kompilierte Kotlin-Outputs in den JDT.LS-Classpath der Maven-Abhaenger eintragen.
+Vorher mindestens einmal `SPC m c' bzw. Maven `compile' ausfuehren, damit
+target/classes die Kotlin-.class-Dateien enthält. Mit Praefix werden die Einträge
+geschrieben, aber JDT.LS nicht automatisch neu gestartet."
+  (interactive "P")
+  (let* ((root (or (ignore-errors (+idea--project-root))
+                   (projectile-project-root)
+                   default-directory))
+         (modules (+java--reactor-module-dirs root))
+         changed)
+    (dolist (producer modules)
+      (let ((artifact (file-name-nondirectory (directory-file-name producer)))
+            (output (expand-file-name "target/classes" producer)))
+        (when (and (+java--module-has-kotlin-p producer)
+                   (file-directory-p output))
+          (dolist (consumer modules)
+            (when (and (not (equal producer consumer))
+                       (+java--pom-depends-on-p consumer artifact)
+                       (+java--classpath-add-lib consumer output))
+              (push (format "%s <- %s" (file-name-nondirectory
+                                        (directory-file-name consumer))
+                            artifact)
+                    changed))))))
+    (cond
+     (no-restart
+      (message "Kotlin-Classpath ergaenzt: %s -- JDT.LS neu starten (SPC m L)"
+               (if changed (string-join (nreverse changed) ", ") "nichts zu aendern")))
+     (t
+      ;; Auch wenn die Library bereits eingetragen ist, muss JDT.LS nach einer
+      ;; Kotlin-Aenderung seine Java-Diagnostics gegen die frisch kompilierten
+      ;; .class-Dateien neu berechnen. Der Befehl ist deshalb bewusst ein
+      ;; "Sync + Refresh", nicht nur ein einmaliger Classpath-Editor.
+      (message "Kotlin-Classpath%s -- starte JDT.LS neu ..."
+               (if changed
+                   (format " ergaenzt: %s" (string-join (nreverse changed) ", "))
+                 " aktuell"))
+      (dolist (w (+java--jdtls-workspaces))
+        (ignore-errors (lsp-workspace-restart w)))))))
+
+;; Nach echtem "Update Project Configuration" regeneriert m2e die lokale
+;; .classpath und entfernt damit sowohl Generated-Source-Roots als auch die
+;; Kotlin-Output-Libraries. Beides wird nach Abschluss des asynchronen Updates
+;; automatisch wiederhergestellt. Ein einzelner Restart danach lässt JDT.LS die
+;; komplette reparierte Classpath-Datei einlesen (statt zwei Restarts).
 (with-eval-after-load 'lsp-java
+  (defvar +java--classpath-repair-timer nil
+    "Verzoegerter Nachlauf nach `lsp-java-update-project-configuration'.")
+
+  (defun +java--repair-derived-classpath-after-update (&rest _)
+    "m2e-überschriebene Generated-/Kotlin-Classpath-Einträge automatisch reparieren."
+    (when (timerp +java--classpath-repair-timer)
+      (cancel-timer +java--classpath-repair-timer))
+    (let ((root default-directory))
+      (setq +java--classpath-repair-timer
+            (run-at-time
+             12 nil
+             (lambda (directory)
+               (let ((default-directory directory))
+                 (setq +java--classpath-repair-timer nil)
+                 (+java/ensure-generated-source-roots t)
+                 (+java/ensure-kotlin-output-classpath t)
+                 ;; `SPC m u' ist eine explizite Projekt-Reimport-Aktion. Der
+                 ;; eine Restart hier ist beabsichtigt und macht neue Klassen/
+                 ;; Source-Roots sofort sichtbar.
+                 (dolist (workspace (+java--jdtls-workspaces))
+                   (ignore-errors (lsp-workspace-restart workspace)))))
+             root))))
+  ;; Kompatibilitaet mit der frueheren, nur Swagger betreffenden Advice:
+  ;; beim Reload darf sie keinen zweiten Restart mehr ausloesen.
+  (advice-remove 'lsp-java-update-project-configuration
+                 #'+java--ensure-generated-source-roots-after-update)
+  (advice-remove 'lsp-java-update-project-configuration
+                 #'+java--repair-derived-classpath-after-update)
   (advice-add 'lsp-java-update-project-configuration :after
-              (lambda (&rest _)
-                (run-at-time 12 nil #'+java/ensure-generated-source-roots))))
+              #'+java--repair-derived-classpath-after-update))
 
 (after! lsp-mode
   ;; ---- Performance (grosses Reactor-Projekt; "wird beim Nutzen immer langsamer") ----
@@ -150,7 +311,10 @@ Workspace neu gestartet (noetig, damit die .classpath neu gelesen wird); mit Pra
         lsp-enable-on-type-formatting nil        ; nicht waehrend des Tippens umformatieren
         lsp-enable-text-document-color nil       ; kein Farb-Overlay fuer Hex/CSS-Farben
         lsp-headerline-breadcrumb-enable nil     ; Breadcrumb-Leiste spart Redraw-Aufwand
-        lsp-modeline-code-actions-enable t       ; Lightbulb in der Modeline: zeigt, wenn Quick-Fixes/Code-Actions verfuegbar sind (wie IntelliJ). Ausfuehren via SPC c a
+        ;; Die Modeline-Lightbulb fragt in `post-command-hook' fortlaufend
+        ;; `textDocument/codeAction' ab. Das war der konkrete Timeout im
+        ;; Screenshot; Quick-Fixes bleiben gezielt ueber `SPC c a' verfuegbar.
+        lsp-modeline-code-actions-enable nil
         lsp-modeline-workspace-status-enable nil
         ;; CodeLens (Referenz-/Implementierungs-Zaehler ueber dem Code) AUS: es feuert
         ;; laufend `textDocument/codeLens'+`codeLens/resolve' fuer jede sichtbare Methode
@@ -165,8 +329,10 @@ Workspace neu gestartet (noetig, damit die .classpath neu gelesen wird); mit Pra
         ;; das Projektmodell dauerhaft haelt -> t. Bewusst beenden: M-x lsp-workspace-shutdown.
         lsp-keep-workspace-alive t
         lsp-signature-render-documentation nil   ; Signatur ohne langes Doc-Rendering
-        ;; Watcher: 100000 hiess "ueberwache fast alles" -> dauerhafte CPU-Last bei grossen
-        ;; Reactors. Schwelle senken + mehr Build-/Tool-Ordner ignorieren:
+        ;; JDT.LS/Maven beobachten ihre Projektdateien selbst. Emacs' zweiter
+        ;; Watcher-Stack bringt bei einem 8,5-GB-Reactor nur Ereignisfluten und
+        ;; JSON-Verkehr; offene Buffer werden ohnehin direkt per LSP synchronisiert.
+        lsp-enable-file-watchers nil
         lsp-file-watch-threshold 8000)
   (dolist (re '("[/\\\\]target\\'" "[/\\\\]\\.idea\\'" "[/\\\\]node_modules\\'"
                 "[/\\\\]\\.git\\'" "[/\\\\]\\.settings\\'" "[/\\\\]bin\\'"
@@ -174,11 +340,11 @@ Workspace neu gestartet (noetig, damit die .classpath neu gelesen wird); mit Pra
     (add-to-list 'lsp-file-watch-ignored-directories re)))
 
 (after! lsp-ui
-  ;; Sideline bleibt AN fuer Diagnostics (zeigt z.B. "unused import"-Warnungen inline,
-  ;; siehe Item Git-Diff), aber die teuren Teile (Hover/Code-Actions) aus + nur bei
-  ;; Zeilenwechsel statt bei jeder Cursorbewegung aktualisieren -> spuerbar fluessiger.
+  ;; Flycheck zeigt LSP-Diagnostics bereits im Buffer und `SPC c e/w/x' navigiert
+  ;; sie. Die lsp-ui-Sideline dupliziert sie als Overlays und kostet bei grossen
+  ;; Java-Dateien bei jedem Zeilenwechsel Redisplay-Zeit.
   (setq lsp-ui-doc-delay 0.5
-        lsp-ui-sideline-enable t
+        lsp-ui-sideline-enable nil
         lsp-ui-sideline-show-diagnostics t
         lsp-ui-sideline-show-hover nil
         lsp-ui-sideline-show-code-actions nil
@@ -501,7 +667,8 @@ Code-Ansicht wieder her. Rueckgabewert ist der Compilation-Buffer."
   ["Rebuild / Frei / LSP"
    ("b" "Rebuild Project (clean install -DskipTests)" +mvn/rebuild-project)
    ("e" "Goal selbst eingeben (Execute Maven Goal)" +mvn/execute-goal)
-   ("u" "Maven neu importieren" lsp-java-update-project-configuration)])
+   ("u" "Maven neu importieren" lsp-java-update-project-configuration)
+   ("K" "Kotlin-Outputs fuer JDT" +java/ensure-kotlin-output-classpath)])
 
 ;; --- "Execute Maven Goal" (wie IntelliJ): beliebiges Goal eingeben + ausfuehren ---
 (defvar +mvn/goal-history nil
@@ -1181,6 +1348,8 @@ Ersetzt die Upstream-Bedingung `running?' durch `+dap--halted-p'."
         (apply orig args)
       (ignore-errors (posframe-hide dap-ui--control-buffer))))
 
+  ;; `load!' / `doom/reload' darf diese Advice nicht mehrfach stapeln.
+  (advice-remove 'dap-ui--update-controls #'+dap--controls-only-when-halted-a)
   (advice-add 'dap-ui--update-controls :around #'+dap--controls-only-when-halted-a)
 
   (defun +dap/controls-on (&rest _)
@@ -1804,6 +1973,7 @@ EVENT ist z.B. \"cpu\" (Methodenlaufzeit) oder \"alloc\" (Memory/Allokation)."
            :desc "Imports ordnen"          "o" #'lsp-java-organize-imports
            :desc "Maven neu importieren"   "u" #'lsp-java-update-project-configuration
            :desc "Generated Sources -> Classpath" "G" #'+java/ensure-generated-source-roots
+           :desc "Kotlin-Outputs -> Classpath" "K" #'+java/ensure-kotlin-output-classpath
            :desc "Code-Lens an/aus"        "l" #'lsp-lens-mode                   ; Referenz-Zaehler bei Bedarf
            :desc "LSP neu verbinden"       "L" #'+java/lsp-reconnect             ; Reparatur: lsp im Buffer (neu) starten, wenn Vorschlaege fehlen
            ;; Tests jetzt unter "T" (Shift-t), da "t" das freie Maven-Goal ist:
@@ -2130,24 +2300,86 @@ eines Syntaxfehlers nicht parsebar ist.")
 (defconst +java-type-capf--kinds '(5 10 11 23)
   "LSP-SymbolKinds, die als Typ gelten: Class, Enum, Interface, Struct.")
 
-(defvar +java-type-capf--cache nil
-  "Cache der letzten Index-Abfrage: (PRAEFIX . SYMBOLE).
-Wird bei laengerem Praefix lokal weitergefiltert, statt neu anzufragen.")
+(defvar-local +java-type-capf--cache (make-hash-table :test #'equal)
+  "Index-Cache PRAEFIX -> SYMBOLE des aktuellen Java-Buffers.
+Ein Cache pro Buffer/Workspace verhindert, dass gleichlautende Typen aus einem
+anderen Projekt fuer die Completion herangezogen werden.")
+
+(defvar-local +java-type-capf--pending (make-hash-table :test #'equal)
+  "Noch laufende asynchrone `workspace/symbol'-Abfragen nach Praefix.")
+
+(defun +java-type-capf--ensure-state ()
+  "Cache nach einem Config-Reload auch in bereits offenen Buffern initialisieren."
+  (unless (hash-table-p +java-type-capf--cache)
+    (setq-local +java-type-capf--cache (make-hash-table :test #'equal)))
+  (unless (hash-table-p +java-type-capf--pending)
+    (setq-local +java-type-capf--pending (make-hash-table :test #'equal))))
+
+(defun +java-type-capf--cached-symbols (prefix)
+  "Laengsten fuer PREFIX passenden Eintrag im lokalen Index-Cache liefern."
+  (+java-type-capf--ensure-state)
+  (let (best-prefix best-symbols)
+    (maphash
+     (lambda (cached-prefix symbols)
+       (when (and (string-prefix-p cached-prefix prefix t)
+                  (or (null best-prefix)
+                      (> (length cached-prefix) (length best-prefix))))
+         (setq best-prefix cached-prefix
+               best-symbols symbols)))
+     +java-type-capf--cache)
+    best-symbols))
 
 (defun +java-type-capf--symbols (prefix)
-  "Typ-Symbole aus dem JDT.LS-Index fuer PREFIX (mit lokalem Cache)."
-  (let ((cached-prefix (car +java-type-capf--cache)))
-    (unless (and cached-prefix
-                 (string-prefix-p cached-prefix prefix t)
-                 (>= (length prefix) (length cached-prefix)))
-      (setq +java-type-capf--cache
-            (cons prefix
-                  (seq-filter
-                   (lambda (sym) (memq (lsp-get sym :kind) +java-type-capf--kinds))
-                   (append (ignore-errors
-                             (lsp-request "workspace/symbol" (list :query prefix)))
-                           nil)))))
-    (cdr +java-type-capf--cache)))
+  "Typ-Symbole aus dem JDT.LS-Index fuer PREFIX ohne den Editor zu blockieren.
+Die alte Variante rief hier synchron `lsp-request' auf. Corfu wertet CAPFs beim
+Tippen aus; jede neue Klasse (`Pe', `Per', ...) konnte daher den Main-Thread bis
+zum LSP-Timeout blockieren. Jetzt liefert der Cache sofort Treffer. Fehlt er,
+wird die Anfrage asynchron gestartet und die Completion nach ihrer Antwort
+erneuert."
+  (+java-type-capf--ensure-state)
+  (or (+java-type-capf--cached-symbols prefix)
+      (progn
+        (unless (gethash prefix +java-type-capf--pending)
+          (puthash prefix t +java-type-capf--pending)
+          (let ((buffer (current-buffer))
+                (start (copy-marker (car (bounds-of-thing-at-point 'symbol))))
+                (end (copy-marker (cdr (bounds-of-thing-at-point 'symbol))))
+                (tick (buffer-chars-modified-tick)))
+            (lsp-request-async
+             "workspace/symbol" (list :query prefix)
+             (lambda (result)
+               (when (buffer-live-p buffer)
+                 (with-current-buffer buffer
+                   (remhash prefix +java-type-capf--pending)
+                   (puthash
+                    prefix
+                    (seq-filter
+                     (lambda (sym)
+                       (memq (lsp-get sym :kind) +java-type-capf--kinds))
+                     (append result nil))
+                    +java-type-capf--cache)
+                   ;; Nur die unveraenderte, noch aktive Eingabestelle erneut
+                   ;; vervollstaendigen. So poppt kein altes Ergebnis woanders auf.
+                   (when (and (= tick (buffer-chars-modified-tick))
+                              (marker-position start)
+                              (marker-position end)
+                              (string= prefix
+                                       (buffer-substring-no-properties
+                                        (marker-position start) (marker-position end))))
+                     (save-excursion
+                       (goto-char (marker-position end))
+                       (ignore-errors (completion-at-point))))
+                   (set-marker start nil)
+                   (set-marker end nil))))
+             :mode 'detached
+             :error-handler
+             (lambda (&rest _)
+               (when (buffer-live-p buffer)
+                 (with-current-buffer buffer
+                   (remhash prefix +java-type-capf--pending)))
+               (set-marker start nil)
+               (set-marker end nil)))))
+        nil)))
 
 (defun +java-type-capf--package ()
   "Paket der aktuellen Datei (oder nil)."
@@ -2273,7 +2505,11 @@ Treffer -- das ist der LSP-Kandidat mit seinen Zusatzinfos (u.a. Import-Edits)."
   "Typ-Vorschlaege aus dem JDT.LS-Index an/aus schalten (wirkt in neuen Buffern)."
   (interactive)
   (setq +java-type-capf-enable (not +java-type-capf-enable))
-  (setq +java-type-capf--cache nil)
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when (derived-mode-p 'java-mode 'java-ts-mode)
+        (setq-local +java-type-capf--cache (make-hash-table :test #'equal)
+                    +java-type-capf--pending (make-hash-table :test #'equal)))))
   (message "Typ-Vorschlaege aus dem Index: %s"
            (if +java-type-capf-enable "AN" "AUS")))
 

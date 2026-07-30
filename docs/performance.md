@@ -315,8 +315,45 @@ Danach werden die lsp/dap-`.eln` beim ersten echten Einsatz im Hintergrund neu (
 Plists) erzeugt; bis dahin laeuft die frische Plists-`.elc`. Kein wiederkehrender
 Daemon-Neustart mehr noetig.
 
-### Optional zusaetzlich (ohne Neustart)
-- `lsp-modeline-code-actions-enable nil` in `+java.el`: die Lightbulb feuert
-  `textDocument/codeAction` bei JEDEM Kommando (im `*lsp-log*`: "Cancelling
-  textDocument/codeAction ... in hook post-command-hook"). Aus = weniger Requests/Muell;
-  Code-Actions bleiben on-demand per `SPC c a`.
+## 4. Reactor-Optimierung (30.07.2026)
+
+Messung im geöffneten Projekt `entscheidungen` (8,5 GB, ca. 4.450 Java-Dateien):
+
+- JDT.LS validierte geänderte Dateien im Workspace-Log typischerweise in
+  **30–158 ms** und war im Leerlauf bei 0 % CPU.
+- Der Emacs-Daemon lag dagegen zeitweise bei 31 % CPU. Ein Stack-Sample zeigte
+  `gcmh_idle_garbage_collect` / `process_mark_stack` als dominante Arbeit.
+- Der konkrete Fehler `Timeout while waiting for response. Method:
+  textDocument/codeAction` kam von der Modeline-Lightbulb: Sie fragt
+  Code-Actions im `post-command-hook` fortlaufend ab.
+
+Folgende Hintergrundpfade sind daher deaktiviert:
+
+- `lsp-modeline-code-actions-enable nil`: kein Code-Action-Request pro
+  Cursorbewegung. Quick-Fixes bleiben auf Zuruf mit `SPC c a`.
+- `lsp-enable-file-watchers nil`: JDT.LS/Maven beobachten die Projektdateien
+  selbst; Emacs erzeugt nicht zusätzlich Ereignisse für den großen Reactor.
+- `lsp-ui-sideline-enable nil`: Flycheck zeigt LSP-Diagnostics bereits inline
+  und `SPC c e/w/x` navigiert sie; keine doppelten Sideline-Overlays.
+- serverseitige Reference-/Implementation-CodeLens, automatische Maven-
+  Source-Downloads und automatische Import-Optimierung beim Speichern: aus.
+  Imports bleiben gezielt über `SPC m o` verfügbar.
+- JDT.LS startet ohne die von `lsp-java` standardmäßig gesetzten Debug-Flags
+  `-Dlog.protocol=true` und `-Dlog.level=ALL`; normaler Eclipse-Fehlerlog
+  bleibt verfügbar, aber der Reactor produziert keinen Detail-Protokoll-I/O.
+- GCMH sammelt erst nach 60 Sekunden Leerlauf statt zwischen kurzen
+  LSP-Antwortpausen.
+
+### Fehlerresistente Typ-Completion
+
+Der Fallback für Klassen-Vervollständigung bei Syntaxfehlern fragt
+`workspace/symbol` nicht mehr synchron aus dem Corfu-CAPF ab. Zuvor konnte jede
+neue Typ-Präfix-Eingabe den Emacs-Main-Thread bis zur JDT-Antwort blockieren.
+Die Anfrage läuft jetzt asynchron, Ergebnisse werden pro Buffer gecacht und das
+Completion-Popup nach Eintreffen aktualisiert.
+
+### Nach dieser Umstellung
+
+Ein bereits laufender JDT.LS-Prozess kennt einige Einstellungen nur beim
+Initialisieren. Deshalb wurde er beendet; beim nächsten Java-Buffer startet er
+automatisch mit der schlankeren Konfiguration. Das ist **kein** Emacs-Neustart.

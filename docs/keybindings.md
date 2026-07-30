@@ -20,6 +20,7 @@
 | `=`   | `lsp-format-buffer` | Formatieren (JDT/IntelliJ-Style) |
 | `o`   | `lsp-java-organize-imports` | Imports ordnen |
 | `u`   | `lsp-java-update-project-configuration` | Maven neu importieren |
+| `K`   | `+java/ensure-kotlin-output-classpath` | Kotlin-`.class`-Outputs für Java/JDT.LS-Abhängigkeiten übernehmen (nach Maven-Compile) |
 | `l`   | `lsp-lens-mode` | Code-Lens (Referenz-/Implementierungszaehler) an/aus |
 | `g o` | `lsp-java-generate-overrides` | Override/Implement: eine Methode waehlen -> sofort overridden |
 | `g g` | `lsp-java-generate-getters-and-setters` | Getter & Setter |
@@ -115,6 +116,7 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 | `b` | Rebuild Project (clean install -DskipTests) |
 | `e` | freies Goal eingeben (Execute Maven Goal) |
 | `u` | Maven neu importieren |
+| `K` | Kotlin-Outputs für JDT.LS-Classpath übernehmen |
 
 ## Global (`SPC`)
 

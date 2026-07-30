@@ -70,6 +70,7 @@ Transient-Menue mit Flags und Goals (laeuft im `compile`-Buffer):
 - Nur aktuelles Modul (`-pl <modul> -am`): `mc` compile, `mi` install
 - `e` freies Goal eingeben (Execute Maven Goal)
 - `u` Maven neu importieren (LSP)
+- `K` Kotlin-Outputs in den JDT-Classpath übernehmen
 
 ### Maven-Ausgabe als Vollbild (`q` zurueck zum Code)
 
@@ -277,9 +278,31 @@ festgenagelt).
   den JDT.LS-Workspace neu (mit `C-u` ohne Neustart).
 - Nach `SPC m u` ("Update Project Configuration") wird die `.classpath` von JDT.LS neu
   erzeugt und unser Eintrag ist weg -- deshalb zieht ein Advice die Eintraege ~12 s
-  spaeter automatisch wieder nach (und startet bei Bedarf neu).
+  später automatisch wieder nach und startet JDT.LS einmal mit dem reparierten
+  Classpath neu.
 - Voraussetzung: die Sourcen muessen generiert sein (z.B. einmal `mvn generate-sources`
   bzw. `compile` im Modul). Danach `SPC m G`.
 
 Weitere Generatoren/Module funktionieren automatisch, solange sie nach
 `target/generated-sources/...` schreiben und gueltige `package`-Deklarationen haben.
+
+## Kotlin-Typen in Java-Modulen
+
+Im Projekt liegen einige Kotlin-Dateien bewusst unter `src/main/java`. Das ist für
+Maven/IntelliJ korrekt, aber JDT.LS kann Kotlin-Quellen nicht selbst analysieren.
+Java-Module, die solche Typen importieren, benötigen deshalb die von Maven erzeugten
+Kotlin-`.class`-Dateien aus dem abhängigen Modul.
+
+Wenn `SPC c X` Meldungen wie `…KotlinTyp cannot be resolved to a type` zeigt:
+
+1. Einmal `SPC m c` ausführen, damit Maven die Kotlin-Klassen in
+   `target/classes` erzeugt.
+2. `SPC m K` (`+java/ensure-kotlin-output-classpath`) drücken; alternativ im
+   Maven-Menü `SPC m m`, dann `K`.
+
+Der Befehl ergänzt nur lokal in der unversionierten `.classpath` eines Maven-
+Abhängers einen Library-Eintrag auf dessen Kotlin-Output und startet JDT.LS einmal
+neu. Danach verschwinden die falschen Java-Diagnosen und Navigation/Completion sehen
+den Kotlin-Typ. Nach `SPC m u` stellt die Konfiguration diesen Eintrag automatisch
+wieder her; `SPC m K` ist nur für einen sofortigen manuellen Sync nach einem
+Kotlin-Maven-Compile nötig.
