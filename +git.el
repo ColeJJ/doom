@@ -13,11 +13,17 @@
                  "gitlab.guidecom.local"
                  forge-gitlab-repository)))
 
-;; TODO/FIXME-Uebersicht direkt im Magit-Status anzeigen:
-(after! magit
-  (magit-todos-mode 1)
-  ;; Wort-genaues Diff (IntelliJ: hebt die geaenderten Stellen INNERHALB der Zeile hervor):
-  (setq magit-diff-refine-hunk 'all))
+;; TODO/FIXME-Scan nicht in jeden Magit-Status-Refresh einhängen. In großen
+;; Repositories bleibt der Status dadurch sofort verfügbar; die Übersicht steht
+;; gezielt über `SPC g t' bereit. `setq' vor dem Paketladen ist absichtlich:
+;; `defcustom' erhält den Wert beim späteren Laden von Magit unverändert.
+(setq magit-diff-refine-hunk t)
+(with-eval-after-load 'magit-todos
+  (when (bound-and-true-p magit-todos-mode)
+    (magit-todos-mode -1)))
+
+(map! :leader
+      :desc "Git: TODO/FIXME Übersicht" "g t" #'magit-todos-list)
 
 ;; Syntax-Highlighting + Theme-Farben im Magit-Diff (IntelliJ-aehnlich).
 ;; magit-delta leitet die Diffs durch das CLI-Tool "delta" (brew install git-delta),
@@ -208,10 +214,44 @@ Abzweigpunkt gediffed, also inklusive ungestagter/ungecommitteter Aenderungen."
                  ref (or (magit-get-current-branch) "HEAD") (magit-rev-abbrev mb))
         (magit-diff-range (format "%s...HEAD" ref))))))
 
+;;;###autoload
+(defun +git/diff-buffer-file-vs-base-branch (&optional choose-base)
+  "Aktuelle Datei gegen ihre Version am Abzweigpunkt diffen.
+Im Unterschied zu `+git/diff-vs-base-branch' wird ausschließlich die Datei
+des aktuellen Buffers gezeigt: Arbeitsbaum/aktueller Branch gegen MERGE-BASE.
+Mit `C-u' wird der Basis-Branch manuell ausgewählt."
+  (interactive "P")
+  (require 'magit)
+  (let ((file (magit-file-relative-name)))
+    (unless file
+      (user-error "Buffer besucht keine Datei in einem Git-Repository"))
+    (save-buffer)
+    (let* ((auto (+git/base-branch))
+           (ref (if choose-base
+                    (magit-read-branch-or-commit "Datei-Diff gegen Branch" (car auto))
+                  (car auto))))
+      (unless ref
+        (user-error "Kein Basis-Branch gefunden (gesucht: %s)"
+                    (string-join +git-base-branches ", ")))
+      (let ((merge-base (magit-git-string "merge-base" "HEAD" ref)))
+        (unless merge-base
+          (user-error "Kein gemeinsamer Vorfahre mit %s (unabhängige Historien?)" ref))
+        (let ((line (line-number-at-pos))
+              (col (current-column)))
+          (message "Datei-Diff %s: Abzweigpunkt %s vs. aktueller Stand"
+                   file (magit-rev-abbrev merge-base))
+          (with-current-buffer
+              (magit-diff-setup-buffer merge-base nil
+                                       (car (magit-diff-arguments))
+                                       (list file) 'unstaged
+                                       magit-diff-buffer-file-locked)
+            (magit-diff--goto-position file line col)))))))
+
 (map! :leader
-      :desc "Branch-Diff vs Abzweigpunkt" "g d" #'+git/diff-vs-base-branch
+      ;; Wie das bisherige `SPC g D': nur die aktuelle Datei vs. HEAD/Arbeitsbaum.
+      :desc "Datei-Diff vs HEAD"          "g d" #'magit-diff-buffer-file
       ;; ersetzt Dooms `magit-file-delete' -- Loeschen geht weiter ueber Magit/dired:
-      :desc "Datei-Diff vs HEAD"          "g D" #'magit-diff-buffer-file)
+      :desc "Datei-Diff vs Abzweigpunkt"  "g D" #'+git/diff-buffer-file-vs-base-branch)
 
 (map! :leader
       :desc "Datei-Historie (Diff-Vorschau)" "g h" #'+git/file-history
@@ -394,39 +434,54 @@ Danach normal editieren; mit `!' (im eDiff-Steuerfenster) die Diffs neu berechne
   (or (cdr (seq-find (lambda (c) (<= days (car c))) +git-blame-age-colors))
       +git-blame-very-old-color))
 
-(defun +git-blame--data (file)
-  "`git blame --line-porcelain' fuer FILE parsen -> Hash Zeilennr -> Plist."
-  (let ((wbuf (generate-new-buffer " *git-blame-out*"))
-        (data (make-hash-table :test 'eql))
-        (default-directory (file-name-directory file)))
-    (unwind-protect
-        (when (zerop (process-file "git" nil wbuf nil "blame"
-                                   "--line-porcelain" "--"
-                                   (file-name-nondirectory file)))
-          (with-current-buffer wbuf
-            (goto-char (point-min))
-            (let (hash author epoch final)
-              (while (not (eobp))
-                (cond
-                 ((looking-at "^\\([0-9a-f]\\{40\\}\\) [0-9]+ \\([0-9]+\\)")
-                  (setq hash  (match-string 1)
-                        final (string-to-number (match-string 2))))
-                 ((looking-at "^author \\(.+\\)")        (setq author (match-string 1)))
-                 ((looking-at "^author-time \\([0-9]+\\)") (setq epoch (string-to-number (match-string 1))))
-                 ((looking-at "^\t")
-                  (when final
-                    (puthash final (list :hash (substring hash 0 7)
-                                         :author author :epoch epoch)
-                             data)
-                    (setq final nil author nil epoch nil))))
-                (forward-line 1))))
-          data)
-      (kill-buffer wbuf))))
+(defun +git-blame--parse-data ()
+  "Aktuellen `git blame --line-porcelain'-Buffer in eine Zeilentabelle parsen."
+  (let ((data (make-hash-table :test 'eql))
+        hash author epoch final)
+    (goto-char (point-min))
+    (while (not (eobp))
+      (cond
+       ((looking-at "^\\([0-9a-f]\\{40\\}\\) [0-9]+ \\([0-9]+\\)")
+        (setq hash (match-string 1)
+              final (string-to-number (match-string 2))))
+       ((looking-at "^author \\(.+\\)") (setq author (match-string 1)))
+       ((looking-at "^author-time \\([0-9]+\\)") (setq epoch (string-to-number (match-string 1))))
+       ((looking-at "^\t")
+        (when final
+          (puthash final (list :hash (substring hash 0 7)
+                               :author author :epoch epoch)
+                   data)
+          (setq final nil author nil epoch nil))))
+      (forward-line 1))
+    data))
 
-(defun +git-blame-inline--apply ()
+(defun +git-blame--start (file callback)
+  "Blame für FILE asynchron lesen und CALLBACK mit der Zeilentabelle aufrufen."
+  (let ((output (generate-new-buffer " *git-blame-out*"))
+        (default-directory (file-name-directory file)))
+    (make-process
+     :name "doom-git-blame"
+     :buffer output
+     :command (list "git" "blame" "--line-porcelain" "--"
+                    (file-name-nondirectory file))
+     :noquery t
+     :connection-type 'pipe
+     :sentinel
+     (lambda (process _event)
+       (when (memq (process-status process) '(exit signal))
+         (let ((buffer (process-buffer process))
+               (data nil))
+           (unwind-protect
+               (when (and (zerop (process-exit-status process))
+                          (buffer-live-p buffer))
+                 (with-current-buffer buffer
+                   (setq data (+git-blame--parse-data))))
+             (when (buffer-live-p buffer) (kill-buffer buffer)))
+           (funcall callback data)))))))
+
+(defun +git-blame-inline--apply (data)
   "Overlays mit Margin-Annotation fuer jede Zeile setzen (nach Alter eingefaerbt)."
-  (let* ((data (+git-blame--data buffer-file-name))
-         (now  (float-time))
+  (let* ((now  (float-time))
          (width 0))
     (unless (and data (> (hash-table-count data) 0))
       (user-error "Keine Blame-Daten -- Datei nicht in Git oder nicht committet"))
@@ -470,10 +525,25 @@ Danach normal editieren; mit `!' (im eDiff-Steuerfenster) die Diffs neu berechne
   (unless buffer-file-name (user-error "Kein dateibasierter Buffer"))
   (setq +git-blame--old-ro buffer-read-only
         +git-blame--overlays nil)
-  (+git-blame-inline--apply)
-  (add-hook 'window-configuration-change-hook #'+git-blame-inline--refresh-margins nil t)
-  (setq buffer-read-only t)
-  (message "Inline-Blame AN -- RET: Commit der Zeile ansehen, q / SPC g B: aus"))
+  (let ((source (current-buffer))
+        (file buffer-file-name))
+    (message "Inline-Blame lädt ...")
+    (+git-blame--start
+     file
+     (lambda (data)
+       (when (buffer-live-p source)
+         (with-current-buffer source
+           (when +git-blame-inline-mode
+             (if (and data (> (hash-table-count data) 0))
+                 (progn
+                   (+git-blame-inline--apply data)
+                   (add-hook 'window-configuration-change-hook
+                             #'+git-blame-inline--refresh-margins nil t)
+                   (setq buffer-read-only t)
+                   (message "Inline-Blame AN -- RET: Commit der Zeile ansehen, q / SPC g B: aus"))
+               (setq +git-blame-inline-mode nil)
+               (+git-blame-inline--disable)
+               (message "Inline-Blame: keine Daten (Datei nicht in Git?)")))))))))
 
 (defun +git-blame-inline--disable ()
   (mapc #'delete-overlay +git-blame--overlays)

@@ -20,7 +20,7 @@
 | `=`   | `lsp-format-buffer` | Formatieren (JDT/IntelliJ-Style) |
 | `o`   | `lsp-java-organize-imports` | Imports ordnen |
 | `u`   | `lsp-java-update-project-configuration` | Maven neu importieren |
-| `K`   | `+java/ensure-kotlin-output-classpath` | Kotlin-`.class`-Outputs für Java/JDT.LS-Abhängigkeiten übernehmen (nach Maven-Compile) |
+| `K`   | `+java/ensure-kotlin-output-classpath` | Kotlin-`.class`-Outputs für Java/JDT.LS-Abhängigkeiten übernehmen (nach Maven-Compile, ohne Workspace-Neustart) |
 | `l`   | `lsp-lens-mode` | Code-Lens (Referenz-/Implementierungszaehler) an/aus |
 | `g o` | `lsp-java-generate-overrides` | Override/Implement: eine Methode waehlen -> sofort overridden |
 | `g g` | `lsp-java-generate-getters-and-setters` | Getter & Setter |
@@ -94,6 +94,13 @@ Start i.d.R. ueber `SPC m r` (Run-Config-Picker -> Debug); ausfuehrliche Doku:
 | `M-<up>` | `+java/previous-method` | zur vorherigen Methode/Definition springen |
 | `M-<down>` | `+java/next-method` | zur naechsten Methode/Definition springen |
 
+## XML-Direkttasten (Liquibase/XML)
+
+| Taste | Befehl | Beschreibung |
+|-------|--------|--------------|
+| `M-<up>` | `+xml/previous-element` | zum Beginn des aktuellen/vorherigen XML-Elements |
+| `M-<down>` | `+xml/next-element` | zum Beginn des nächsten XML-Elements |
+
 ### `SPC m t` -- Execute Maven Goal
 
 Oeffnet ein Eingabefenster (completing-read) mit **Verlauf** ("Recent") und
@@ -149,12 +156,12 @@ uebernommen -- Details und komplette Kuerzelliste in [live-templates.md](live-te
 |-------|--------------|
 | `SPC c g` | **Direkt zur Definition springen** (Klasse/Interface/Enum/Methode, OHNE Peek-Liste) |
 | `SPC c G` | **Direkt zur Typ-Definition springen** (Typ einer Variablen: Klasse/Interface/Enum) |
-| `g d` / `SPC c d` | **Direkt zur Definition springen** (LSP, kein Peek/Liste, KEIN projektweiter ripgrep-Fallback -> schnell, haengt nicht) |
+| `g d` / `SPC c d` / `SPC c j` | **Direkt zur Definition springen** (asynchroner LSP-Request, kein Peek/Liste und kein projektweiter ripgrep-Fallback) |
 | `SPC c t` | zur Typ-Definition (Doom-Standard) |
 | `SPC j i` | **Super-Methode** (`lsp-java-open-super-implementation`, IntelliJ "Go to Super Method"): von der Implementierung zur Methode im Interface/Supertyp |
 | `SPC j I` | **Interface <-> Impl** (`+java/toggle-impl`): zwischen `XService.java` und `XServiceImpl.java` wechseln |
-| `gd` / `gD` | `gd` = zur **Definition** (bei Interfaces ins Interface); `gD` = zur **Implementierung** (`+java/implementation-smart`, wie IntelliJ Ctrl+Alt+B): genau EINE Impl -> direkt dahin, sonst Liste |
-| `SPC c D` | Referenzen (Find Usages) |
+| `gd` / `gD` | `gd` = zur **Definition** (bei Interfaces ins Interface); `gD` = zur **Implementierung** (`+java/implementation-smart`, wie IntelliJ Ctrl+Alt+B): beide Requests laufen asynchron, genau EIN Treffer springt direkt, sonst Liste |
+| `SPC c J` | Referenzen (Find Usages, asynchron; entspricht `SPC j r`) |
 | `SPC c r` | Rename |
 | `SPC c B` | **Projekt pruefen / Build Project** (`+java/check-project`): ganzen Reactor kompilieren, ALLE Fehler projektweit (`]e`/`[e` navigieren); `C-u` = nur Modul + Dependents |
 | `SPC c n` | **Neu: Klasse/Interface/Enum ...** (`+java/new-type`, wie IntelliJ "New"): Typ waehlen (Java-Klasse/Interface/Enum/Record/Annotation, Kotlin-Klasse/Data-Class/Interface/Object/Enum) -> Datei mit Template im aktuellen Verzeichnis anlegen. Paket wird aus dem Pfad (src/main\|test/java\|kotlin) abgeleitet; Name darf ein relatives Unterpaket enthalten (`sub.paket.Name` -> erzeugt Ordner). Auch im Baum (Treemacs `N` bzw. `c j`) ins ausgewaehlte Verzeichnis. |
@@ -167,7 +174,7 @@ uebernommen -- Details und komplette Kuerzelliste in [live-templates.md](live-te
 | `SPC c F` | **Format buffer/region** (`+format/region-or-buffer`, Dooms apheleia-Default) |
 | `SPC j d` | **Zur Definition** (direkt per LSP, `+java/jump-to-definition`) |
 | `SPC p P` | **JDT.LS: nur aktuelles Projekt behalten** (`+java/lsp-prune-to-current-project`): entfernt angesammelte Fremd-Maven-Projekte aus dem Workspace -- Fix gegen langsames/haengendes `g d` |
-| `SPC j r` | **Referenzen/Find Usages** (`+java/references-smart`): genau EINE Referenz (ohne Deklaration) -> **direkt dahin springen** (wie IntelliJ), sonst Liste. Zurueck: `C-o` |
+| `SPC j r` | **Referenzen/Find Usages** (`+java/references-smart`): asynchron; genau EINE Referenz (ohne Deklaration) -> **direkt dahin springen** (wie IntelliJ), sonst Liste. Zurueck: `C-o` |
 | `SPC s i` | Struktur/Outline (imenu) |
 | `SPC c m` | **Methoden dieser Datei** (`consult-imenu`): Liste der Methoden/Funktionen/Klassen der aktuellen Datei, Auswahl springt hin (gleich wie `SPC s i`) |
 | `SPC SPC` | **Datei im Projekt finden -- fuzzy** (`+find/find-file-fuzzy`): FLEX-Matching mit Luecken wie IntelliJ -- `AgendapunktService` findet auch `AgendapunktDummyService` |
@@ -175,7 +182,7 @@ uebernommen -- Details und komplette Kuerzelliste in [live-templates.md](live-te
 
 > Hinweis: Kompilierte `bin/`-Ordner (Eclipse-Build-Output, z.B. `entscheidungen-webapp/bin/...`) werden bei `SPC SPC` / `SPC f c` NICHT mehr als Vorschlag gelistet. Umgesetzt ueber `projectile-git-fd-args` (`-E bin`, fd-Weg) bzw. `projectile-git-command` (`-x bin`, git-ls-files-Fallback) in `config.el`. Falls doch noch alte bin-Pfade auftauchen: einmal `SPC p i` (Projekt-Cache invalidieren).
 | `SPC f m` | **Methode im Projekt finden** (`+find/project-method`): OPTIK wie `SPC SPC`/`SPC f d` -- flache, sofort filterbare Vertico-Liste mit Methoden-Icon. Sammelt einmalig per ripgrep ALLE Java/Kotlin-Methoden im Projekt; Auswahl springt an Datei:Zeile. Aus JEDER Datei aufrufbar (kein LSP noetig). Fuer nur die aktuelle Datei: `SPC s i` (imenu) |
-| `SPC f M` | **Methode finden inkl. Dependencies** (`+find/project-method-deps`): gleiche flache Vertico-Optik wie `SPC f m`, aber ripgrep ueber Projekt + alle JDT.LS-Workspace-Quellprojekte (z.B. `service-framework-core`); Projektname steht im Pfad. Reine Binaer-JARs ohne Quellen sind nicht dabei (fuer Library-Typen: `SPC s a`). Einmaliger Scan (bei mehreren grossen Projekten einige Sekunden) |
+| `SPC f M` | **Methode finden inkl. Dependencies** (`+find/project-method-deps`): gleiche flache Vertico-Optik wie `SPC f m`, aber asynchrones ripgrep über Projekt + alle JDT.LS-Workspace-Quellprojekte (z.B. `service-framework-core`); Emacs bleibt während des Scans bedienbar. |
 | `SPC m s` / `C-c C-c` (in `.sql`) | **SQL ausfuehren** (`+pg/run-sql`): Region bzw. Statement am Cursor auf einem gewaehlten DB-Profil ausfuehren, Ergebnis als pgmacs-Tabelle |
 | `SPC s c` | **Go to Class -- schnell** (Telescope-artig: `fd` ueber .java/.kt, Icons, Preview, KEIN LSP) |
 | `SPC s C` | **Symbolsuche gruendlich** (LSP-Workspace-Symbole, findet auch innere Klassen/Methoden -- langsamer) |
@@ -219,8 +226,8 @@ uebernommen -- Details und komplette Kuerzelliste in [live-templates.md](live-te
 |-------|--------------|
 | `g g` | Magit-Status |
 | `g w` | Worktrees |
-| `g d` | **Branch-Diff vs Abzweigpunkt** (`+git/diff-vs-base-branch`, IntelliJ "Compare with Branch"): alles, was auf diesem Branch seit dem Abzweig von `develop`/`master`/`main` passiert ist. `C-u` = Basis-Branch selbst waehlen, `C-u C-u` = inkl. ungecommitteter Aenderungen |
-| `g D` | **Datei-Diff vs HEAD** (`magit-diff-buffer-file`): aktuelle (uncommittete) Aenderungen der Datei ggü. dem letzten Commit, farbig im Magit-Diff-Buffer (ersetzt Dooms `magit-file-delete`) |
+| `g d` | **Datei-Diff vs HEAD** (`magit-diff-buffer-file`): aktuelle (uncommittete) Aenderungen der Datei ggü. dem letzten Commit, farbig im Magit-Diff-Buffer |
+| `g D` | **Datei-Diff vs Abzweigpunkt** (`+git/diff-buffer-file-vs-base-branch`): aktuelle Datei ggü. ihrer Version am Merge-Base mit `develop`/`master`/`main`. `C-u` = Basis-Branch selbst waehlen |
 | `g h` | **Datei-Historie mit Diff-Vorschau** (`+git/file-history`, Telescope `git_bufcommits`): Commits dieser Datei, live-Diff beim Blaettern |
 | `g H` | **Datei-Timemachine** (`git-timemachine`): Datei-Versionen mit `n`/`p` durchblaettern |
 | `g L` | **Datei-Historie (Magit-Log)** (`magit-log-buffer-file`): Commit-Log dieser Datei, `RET` = ganzer Commit |

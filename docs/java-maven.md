@@ -151,41 +151,17 @@ Eingabefenster mit **Verlauf** und haeufigen Goals. Der getippte Text laeuft 1:1
 `mvn <goal>` im Reactor-Root, z.B. `clean install -DskipTests`. Mit `C-u SPC m t`
 nur im Modul der aktuellen Datei (`-pl <modul> -am`).
 
-## Typ-Vorschlaege auch bei Syntaxfehlern in der Datei
+## Code-Completion
 
-Problem: `textDocument/completion` laeuft in JDT.LS ueber den **AST der aktuellen
-Datei**. Ist die Datei nicht parsebar -- z.B. weil im Konstruktor-Aufruf noch ein
-Parameter fehlt, den man ja gerade erst per Dependency Injection ergaenzen will --
-liefert JDT.LS an der Cursorstelle kaum noch Kandidaten. Gemessen in genau so einem
-Zustand: **1** Kandidat fuer das Praefix `Perso` (nur die eigene Klasse). IntelliJ hat
-hier eine robustere Fehlerkorrektur im Editor-Parser.
+Java- und Kotlin-Completion kommt ausschließlich von JDT.LS bzw. Kotlin-LS. Das
+erhält die serverseitige Relevanz-Sortierung, automatische Imports und die
+`lsp-capf`-Kategorie für Corfu/Orderless. Eine frühere zweite
+`workspace/symbol`-Quelle wurde entfernt, weil sie Completion selbst erneut
+auslöste und JDT.LS dadurch dauerhaft belastete.
 
-Loesung in `+java.el`: `workspace/symbol` fragt den **Index** ab, nicht den AST --
-das funktioniert auch bei kaputtem Syntaxbaum (im selben Zustand gemessen: **558**
-Typen fuer `Perso`). Daraus wird eine zweite Completion-Quelle (`+java-type-capf`)
-gebaut und per `cape-capf-super` **mit** der normalen LSP-Completion zusammengefuehrt.
-Ergebnis: Typnamen stehen immer zur Verfuegung, die kontextgenauen LSP-Vorschlaege
-bleiben zusaetzlich erhalten.
-
-Details:
-
-- Greift nur bei einem **typ-artigen Praefix**: mindestens 2 Zeichen, beginnt mit
-  Grossbuchstaben, und **nicht** direkt nach einem Punkt (dort will man Member,
-  keine Typen). Das haelt normale Variablen-/Methoden-Completion frei von Rauschen.
-- Vorgeschlagen werden Klassen, Interfaces, Enums und Records (LSP-SymbolKinds 5, 10,
-  11, 23). Die Annotation rechts zeigt das **Paket**.
-- Der fehlende `import` wird beim Uebernehmen automatisch ergaenzt -- hinter den
-  letzten Import bzw. hinter die `package`-Zeile. Uebersprungen wird er bei
-  `java.lang`, bei gleichem Paket, bei bereits vorhandenem Import und bei einer
-  **Namenskollision** (ein anderer Import belegt denselben einfachen Namen -- dort
-  muss man voll qualifizieren, ein zweiter Import wuerde den Code brechen).
-- Doppelte Eintraege (LSP und Index liefern denselben Typ) werden entfernt; behalten
-  wird der LSP-Kandidat mit seinen Zusatzinfos.
-- Abschalten: `M-x +java/toggle-type-completion` bzw. dauerhaft
-  `+java-type-capf-enable` auf nil.
-
-Wenn die Completion mal gar nicht aufpoppt: `C-SPC` erzwingt sie. Kommen dann immer
-noch keine Kandidaten, ist der LSP-Workspace das Problem -> `SPC m L` (neu verbinden).
+`C-SPC` erzwingt die Completion. Fehlen Vorschläge danach weiterhin, ist der
+Projekt-Classpath oder der LSP-Workspace betroffen; `SPC m L` bleibt der bewusst
+manuelle Neustart für diesen Ausnahmefall.
 
 ## Imports & Generierung
 
@@ -274,12 +250,12 @@ generisch ueber das `package` der generierten `.java` abgeleitet (nicht auf Swag
 festgenagelt).
 
 - `SPC m G` (`+java/ensure-generated-source-roots`): traegt fehlende generierte
-  Source-Roots aller Reactor-Module in deren `.classpath` ein und startet bei Aenderung
-  den JDT.LS-Workspace neu (mit `C-u` ohne Neustart).
+  Source-Roots aller Reactor-Module in deren `.classpath` ein und meldet die geänderten
+  Dateien gezielt an JDT.LS (kein Workspace-Neustart).
 - Nach `SPC m u` ("Update Project Configuration") wird die `.classpath` von JDT.LS neu
   erzeugt und unser Eintrag ist weg -- deshalb zieht ein Advice die Eintraege ~12 s
-  später automatisch wieder nach und startet JDT.LS einmal mit dem reparierten
-  Classpath neu.
+  später automatisch wieder nach und sendet nur die reparierten Classpath-Dateien an
+  JDT.LS.
 - Voraussetzung: die Sourcen muessen generiert sein (z.B. einmal `mvn generate-sources`
   bzw. `compile` im Modul). Danach `SPC m G`.
 
@@ -290,8 +266,8 @@ Weitere Generatoren/Module funktionieren automatisch, solange sie nach
 
 Im Projekt liegen einige Kotlin-Dateien bewusst unter `src/main/java`. Das ist für
 Maven/IntelliJ korrekt, aber JDT.LS kann Kotlin-Quellen nicht selbst analysieren.
-Java-Module, die solche Typen importieren, benötigen deshalb die von Maven erzeugten
-Kotlin-`.class`-Dateien aus dem abhängigen Modul.
+Java-Module (auch Java-Dateien im selben Maven-Modul), die solche Typen importieren,
+benötigen deshalb die von Maven erzeugten Kotlin-`.class`-Dateien.
 
 Wenn `SPC c X` Meldungen wie `…KotlinTyp cannot be resolved to a type` zeigt:
 
@@ -300,9 +276,24 @@ Wenn `SPC c X` Meldungen wie `…KotlinTyp cannot be resolved to a type` zeigt:
 2. `SPC m K` (`+java/ensure-kotlin-output-classpath`) drücken; alternativ im
    Maven-Menü `SPC m m`, dann `K`.
 
-Der Befehl ergänzt nur lokal in der unversionierten `.classpath` eines Maven-
-Abhängers einen Library-Eintrag auf dessen Kotlin-Output und startet JDT.LS einmal
-neu. Danach verschwinden die falschen Java-Diagnosen und Navigation/Completion sehen
-den Kotlin-Typ. Nach `SPC m u` stellt die Konfiguration diesen Eintrag automatisch
-wieder her; `SPC m K` ist nur für einen sofortigen manuellen Sync nach einem
-Kotlin-Maven-Compile nötig.
+Der Befehl erzeugt lokal aus `target/classes` einen kleinen
+`.jdtls-kotlin-output.jar` nur für das Kotlin-erzeugende Modul. Maven-Abhängern wird
+direkt deren `target/classes` als Binary-Library eingetragen, sodass neue Kotlin-Klassen
+nach jedem Compile ohne veralteten JAR sichtbar sind. Geänderte Classpath-Dateien werden
+an JDT.LS gemeldet, kein Reactor-Neustart ist nötig. Nach `SPC m u` stellt die
+Konfiguration die Einträge automatisch wieder her.
+
+### Automatisch nach Doom-Maven-Builds
+
+`SPC m c`, `SPC m i`, Rebuild und die anderen Doom-Maven-Aufrufe verwenden
+`+mvn/compile`. Nach einem erfolgreichen Build erzeugt dieser Nachlauf den lokalen
+Kotlin-JAR aus den frischen `target/classes` erneut und meldet JDT.LS nur den
+geänderten Binary-Root. Bei einem extern im Terminal gestarteten Maven-Build ist
+stattdessen anschließend einmal `SPC m K` nötig.
+
+### Annotation Processing
+
+JDTs eigenes Annotation Processing ist deaktiviert. Maven erzeugt QueryDSL-, Sodalis-
+und andere generierte Quellen bereits; ein zweiter JDT-Lauf erzeugte doppelte Dateien
+und konnte den Projektindex blockieren. Die erzeugten Verzeichnisse bleiben als
+Source-Roots im Classpath sichtbar.

@@ -10,7 +10,10 @@ also die einzige Pflegestelle.
   1. Run-Config auswaehlen (completing-read)
   2. Aktion waehlen: **Run** (ohne Debugger) oder **Debug** (mit Debugger)
 - Start ueber `dap-java`: Main-Klasse, Modul, VM-Parameter, Env und Working-Dir
-  werden aus der XML uebernommen.
+  werden aus der XML uebernommen. Der Classpath kommt ausschliesslich aus dem
+  importierten JDT.LS-Maven-Projektmodell des ausgewaehlten Moduls über
+  `java.project.getClasspaths` -- derselbe Modul-/Reactor-Ansatz wie bei
+  IntelliJs Application-Run-Config.
 - Nach dem Start zeigt Doom den DAP-Ausgabepuffer (`*<Run-Name> out*`) im
   **maximierten Fenster**, genau wie Maven-Ausgaben bei `SPC m c`. `q` stellt
   die vorherige Code-Ansicht samt Fensteraufteilung wieder her. Das gilt fuer
@@ -69,17 +72,16 @@ Diese Datei kommt ueber das Maven-Profil **`ent-dev`** auf den Classpath: die
   **nicht**. Damit es trotzdem wie IntelliJ laeuft, spiegelt `+idea--launch` die
   in `+idea-extra-classpath-dirs` (Default `("src/test/resources/conf")`) gelisteten
   Ressourcen vor dem Start direkt nach `target/classes`. Dieses Verzeichnis liegt
-  bereits auf JDT.LS' Standard-Classpath.
+  bereits auf JDT.LS' Modul-Classpath.
 
-  Der Compile-Classpath wird einmalig und **offline** per
-  `mvn -o -Pent-dev dependency:build-classpath -DincludeScope=compile` ermittelt
-  und pro Modul gecacht. Der Compile-Scope ist erforderlich, weil
-  `sodalis-runtime`/`JettyStarterXML` im Webapp-POM den Scope `provided` hat,
-  aber fuer den lokalen Jetty-Start wie in IntelliJ vorhanden sein muss.
-  Zusaetzlich stehen die `target/classes` aller Reactor-Module vorne im
-  Classpath, damit lokale Änderungen ohne Installation nach `~/.m2` wirken.
-  Das umgeht `dap-java`/JDT.LS' blockierendes
-  `vscode.java.resolveClasspath` vollständig.
+  Den eigentlichen Laufzeit-Classpath liefert JDT.LS per
+  `java.project.getClasspaths` aus dem importierten Maven-Projektmodell. Das
+  umgeht `dap-java`/`vscode.java.resolveClasspath`, dessen Java-Debug-Erweiterung
+  hier mit Gson 2.8.x unter Java 17 fehlschlägt. Es gibt bewusst **keinen**
+  separaten `mvn dependency:build-classpath`-Aufruf mehr: dieser haette die
+  aktuellen Reactor-Module fälschlich als bereits installierte SNAPSHOT-JARs in
+  `~/.m2` verlangt und konnte deshalb trotz funktionierendem IntelliJ-Start
+  scheitern.
 
 Ohne diese Dateien bricht Spring mit
 `Could not resolve placeholder 'ent.db.server'` ab (im Log davor:
@@ -111,13 +113,10 @@ mvn -Pent-dev -pl <modul> -am -Dmaven.test.skip=true install
 
 ### "Build before run" beim dap-Start (`SPC m r`)
 
-> **STANDARD: AUS** (`+idea-build-before-run` = `nil`). `SPC m r` startet direkt, ohne
-> Vor-Kompilierung. Grund: der Start lief sonst im `*compilation*`-Sentinel (nach dem
-> Build) OHNE Java-Buffer-Kontext -> der Guard meldete faelschlich
-> *"Kein JDT.LS in diesem Buffer aktiv"*. Wenn `target/classes` veraltet sind, vorher
-> einmalig `SPC m c` (bzw. `mvn compile`) laufen lassen. Wer den automatischen Vor-Build
-> trotzdem will: `(setq +idea-build-before-run t)` -- der Guard ist inzwischen
-> buffer-unabhaengig repariert.
+> **STANDARD: AN** (`+idea-build-before-run` = `t`). `SPC m r` kompiliert zuerst das
+> ausgewaehlte Modul samt Reactor-Abhaengigkeiten und startet nur bei Erfolg -- wie
+> IntelliJs *Build before run*. Fuer einen bewusst schnellen Start mit bereits frischen
+> `target/classes`: `(setq +idea-build-before-run nil)`.
 
 Optionaler Vor-Build (wenn aktiviert) -- wie IntelliJs "Build before run":
 
@@ -134,8 +133,8 @@ mvn -Pent-dev -pl <modul> -am -Dmaven.test.skip=true compile
 - Der Build laeuft im `*compilation*`-Buffer; **nur bei Erfolg** startet der Run --
   bei Compile-Fehlern wird der Start abgebrochen und die Fehler werden angezeigt
   (wie in IntelliJ).
-- Steuerung ueber `+idea-build-before-run` (Default **`nil`** = aus). Zum Aktivieren:
-  `(setq +idea-build-before-run t)` in `config.el`.
+- Steuerung ueber `+idea-build-before-run` (Default **`t`** = an). Fuer einen Start
+  ohne Vor-Build: `(setq +idea-build-before-run nil)` in `config.el`.
 - Unterschied zum mvn-Weg (`SPC m R`): dort wird `install` (`-am`) nach `~/.m2`
   gebaut (`+idea-build-dependencies`); der dap-Weg braucht nur `compile`
   (`target/classes`), das ist schneller.
@@ -299,3 +298,28 @@ kein Download nötig, solange das Projekt einmal per Maven gebaut wurde.
 
 Hinweis: Die Testklassen müssen **kompiliert** sein (`target/test-classes`), sonst
 `ClassNotFound`. Vorher ggf. `SPC m c` (Projekt prüfen/kompilieren) oder Maven bauen.
+
+### Java-17-Fehler `StackTraceElement$ClassLoaderName`
+
+Bei `SPC m T t` kann die Meldung
+`Failed making field 'java.lang.StackTraceElement$ClassLoaderName' accessible`
+auftreten. Ursache ist Gson 2.8.5 aus den JDT.LS-Test-/Debug-Erweiterungen; diese
+Version versucht unter Java 17 per Reflection auf ein gekapseltes JDK-Feld
+zuzugreifen.
+
+**Fix (automatisch):** `+dap-java--ensure-modern-gson` ersetzt beim Laden von
+`dap-java` die beiden alten Gson-JARs durch die bereits in JDT.LS enthaltene,
+Java-17-kompatible Gson-Version 2.13.1. Nach einem JDT.LS- oder Paket-Update wird
+dies beim nächsten Start erneut geprüft. Einmalig JDT.LS neu starten, falls die
+Test-Erweiterung bereits lief.
+
+### Test-Classpath ohne `vscode.java.resolveClasspath`
+
+Upstream ruft `dap-java` für jeden Test `vscode.java.resolveClasspath` über JDT.LS
+auf. Im großen Reactor kann das hängen oder mit der Java-Test-Erweiterung fehlschlagen.
+`+dap-java--maven-test-command-a` ersetzt diese Anfrage deshalb durch einen
+offline ermittelten Maven-Test-Classpath (`dependency:build-classpath`,
+Test-Scope) inklusive aller lokalen `target/test-classes` und `target/classes`.
+Damit funktionieren `SPC m T t` und `SPC m T a` unabhängig von JDTs
+Classpath-Kommando. Ist Maven offline nicht auflösbar, fällt der Befehl mit einer
+Meldung auf den JDT-Standardpfad zurück.

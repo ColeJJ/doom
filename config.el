@@ -40,8 +40,8 @@
       ;; Standard-Theme beim Start. Zum dauerhaften Wechsel hier auf 'rose-pine-moon
       ;; aendern (und die load-theme-Zeile unten entsprechend) -- oder zur Laufzeit
       ;; einfach `SPC h t' benutzen (siehe +theme/load unten).
-      doom-theme 'tj)
-(load-theme 'tj t)
+      doom-theme 'custom-obsidian)
+(load-theme 'custom-obsidian t)
 
 ;; Sauberer Theme-Wechsel zur Laufzeit (auf `SPC h t').
 ;; `load-theme' allein deaktiviert das alte Theme NICHT -> Face-Reste (z.B. gruber-BG)
@@ -194,20 +194,56 @@
         :n "Q" #'lsp-ui-doc-show))
 
 ;; --------------------------------------------------------------------------
-;; Direkt zur Definition springen (Klasse/Interface/Enum) -- ohne Peek/Liste
+;; Asynchrone LSP-Navigation (Definition / Referenzen / Implementierungen)
 ;; --------------------------------------------------------------------------
-;; Hintergrund: Durch das Modul-Flag `(lsp +peek)' belegt Doom den Definitions-
-;; Handler mit `lsp-ui-peek-find-definitions' -- d.h. `gd' / `SPC c d' oeffnet ein
-;; Peek-Fenster mit einer Liste statt direkt zu springen. Diese Befehle rufen den
-;; LSP-Sprung direkt auf (ueber xref) und landen sofort in der Quelle.
+;; Die Standardfunktion `lsp-find-definition' wartet synchron auf JDT.LS. Bei
+;; großen Maven-Reactoren blockiert das den Emacs-Event-Loop bis zum Timeout.
+;; Diese Helfer senden denselben Request asynchron; ein Treffer springt direkt,
+;; mehrere Treffer öffnen die normale Xref-Liste.
+(defun +java--jump-to-xref-item (item)
+  "Zu Xref-ITEM springen und den Rücksprung wie IntelliJ speichern."
+  (xref-push-marker-stack)
+  (let ((marker (xref-location-marker (xref-item-location item))))
+    (pop-to-buffer-same-window (marker-buffer marker))
+    (goto-char marker)
+    (recenter)))
+
+(defun +java--show-locations (locations description references-p)
+  "LOCATIONS direkt oder als Xref-Liste für DESCRIPTION anzeigen."
+  (let ((items (and locations (lsp--locations-to-xref-items locations))))
+    (cond
+     ((null items)
+      (message "Keine %s gefunden" description))
+     ((= (length items) 1)
+      (+java--jump-to-xref-item (car items))
+      (message "Eine %s -- direkt gesprungen (zurueck: C-o)" description))
+     (t
+      (lsp-show-xrefs items nil references-p)))))
+
+(defun +java--request-locations-async (method params description &optional references-p)
+  "METHOD mit PARAMS asynchron ausführen und die LSP-LOCATIONS anzeigen."
+  (let ((origin (current-buffer)))
+    (when (fboundp 'better-jumper-set-jump) (better-jumper-set-jump))
+    (message "Suche %s ..." description)
+    (lsp-request-async
+     method params
+     (lambda (locations)
+       (if (buffer-live-p origin)
+           (with-current-buffer origin
+             (+java--show-locations locations description references-p))
+         (message "Suche %s abgeschlossen, Quellbuffer wurde geschlossen" description)))
+     :error-handler
+     (lambda (&rest error)
+       (message "Suche %s fehlgeschlagen: %S" description error)))))
+
 (defun +java/jump-to-definition ()
   "Direkt zur Definition des Symbols unter dem Cursor springen (Klasse/Interface/
-Enum/Methode) -- ohne Peek-/Referenzliste. Nutzt LSP, sonst xref als Fallback."
+Enum/Methode), ohne den Editor während der LSP-Antwort zu blockieren."
   (interactive)
-  (when (fboundp 'better-jumper-set-jump) (better-jumper-set-jump))
   (if (bound-and-true-p lsp-mode)
-      (lsp-find-definition)
-    (call-interactively #'xref-find-definitions)))
+      (+java--request-locations-async
+       "textDocument/definition" (lsp--text-document-position-params) "Definitionen")
+    (user-error "Definition braucht einen aktiven LSP-Server")))
 
 (defun +java/jump-to-type-definition ()
   "Direkt zum TYP (Klasse/Interface/Enum) des Symbols unter dem Cursor springen.
@@ -225,40 +261,25 @@ Nuetzlich, wenn der Cursor auf einer Variablen steht und man in deren Typ will."
 ;; sondern direkt springen (wie IntelliJ). Bei mehreren Treffern die normale Liste.
 (defun +java/references-smart ()
   "Referenzen/Find Usages. Genau EINE Referenz (ohne die Deklaration) -> direkt
-dahin springen (wie IntelliJ), sonst die uebliche Referenzliste. Ohne LSP: Fallback."
+dahin springen (wie IntelliJ), sonst die uebliche Referenzliste."
   (interactive)
   (if (not (bound-and-true-p lsp-mode))
-      (call-interactively #'+lookup/references)
-    (let* ((refs  (ignore-errors
-                    (lsp-request "textDocument/references"
-                                 (lsp--make-reference-params nil t)))) ; t = ohne Deklaration
-           (items (and refs (lsp--locations-to-xref-items refs))))
-      (cond
-       ((null items)
-        (message "Keine Referenzen gefunden (ausser der Deklaration)"))
-       ((= (length items) 1)
-        (when (fboundp 'better-jumper-set-jump) (better-jumper-set-jump))
-        (xref-push-marker-stack)
-        (let ((m (xref-location-marker (xref-item-location (car items)))))
-          (pop-to-buffer-same-window (marker-buffer m))
-          (goto-char m)
-          (recenter))
-        (message "Einzige Referenz -- direkt gesprungen (zurueck: C-o)"))
-       (t (call-interactively #'+lookup/references))))))
+      (user-error "Referenzen brauchen einen aktiven LSP-Server")
+    (+java--request-locations-async
+     "textDocument/references" (lsp--make-reference-params nil t)
+     "Referenzen" t)))
 
 (map! :leader
       :desc "Definition: direkt springen" "c g" #'+java/jump-to-definition
-      :desc "Typ-Definition: direkt springen" "c G" #'+java/jump-to-type-definition)
+      :desc "Typ-Definition: direkt springen" "c G" #'+java/jump-to-type-definition
+      :desc "Referenzen: direkt/Liste (LSP)" "c J" #'+java/references-smart)
 
-;; WICHTIG (Performance): `g d' / `SPC c j' / `SPC c d' waren Dooms `+lookup/definition'.
-;; Dessen Fallback-Kette grept bei fehlgeschlagenem/langsamem xref das GESAMTE Projekt
-;; (hier: 8 Maven-Projekte im Workspace) durch -> "laedt ewig und springt dann nicht".
-;; Diese drei jetzt ebenfalls direkt per LSP springen (wie `SPC c g'): sofortiger Sprung
-;; in derselben Klasse, und bei Miss ein schnelles xref statt monorepo-weitem ripgrep.
-;; `g d' nur in LSP-Buffern umbiegen (sonst bleibt Dooms Standard aktiv).
-(after! lsp-mode (map! :map lsp-mode-map :n "g d" #'+java/jump-to-definition))
+;; Kein projektweites Ripgrep-Fallback: ohne LSP erhält man eine klare Meldung
+;; statt eines minutenlangen Suchlaufs über den gesamten Maven-Reactor.
+(map! :n "g d" #'+java/jump-to-definition)
 (map! :leader
       :desc "Definition: direkt springen (LSP)" "c d" #'+java/jump-to-definition
+      :desc "Definition: direkt springen (LSP)" "c j" #'+java/jump-to-definition
       :desc "JDT.LS: nur aktuelles Projekt"     "p P" #'+java/lsp-prune-to-current-project)
 
 ;; --------------------------------------------------------------------------
@@ -574,13 +595,12 @@ Diagnosen der anderen Dateien im Workspace/Projekt angezeigt."
       idle-update-delay 1.0                        ; UI-Elemente seltener aktualisieren
       jit-lock-defer-time 0)                       ; Fontification waehrend Eingabe aufschieben
 
-;; GC fuer lange LSP-Sitzungen: Ein Sample zeigte `gcmh_idle_garbage_collect'
-;; als dominanten Emacs-CPU-Verbraucher. Die automatische kurze Idle-Phase kann
-;; zwischen LSP-Antworten feuern und dadurch Completion/Shortcuts sichtbar
-;; ausbremsen. Seltener und erst nach einer echten Ruhephase sammeln.
+;; GC für lange LSP-Sitzungen: Doom verdoppelt den hohen Schwellenwert während
+;; LSP aktiv ist. 128 MB ergeben damit wirksame 256 MB: groß genug für LSP-
+;; Antworten, aber klein genug, um keine langen 1-GB-GC-Pausen zu erzeugen.
 (after! gcmh
-  (setq gcmh-high-cons-threshold (* 512 1024 1024)
-        gcmh-idle-delay 60
+  (setq gcmh-high-cons-threshold (* 128 1024 1024)
+        gcmh-idle-delay 15
         gcmh-auto-idle-delay-factor 20))
 
 ;; ---- native-compilation (nur mit native-comp-Build, z.B. emacs-plus@30) ----
@@ -784,6 +804,10 @@ rein projektlokale Dateisuche weiter `SPC s c' nutzen."
 (load! "+git")
 (load! "+snippets")   ; IntelliJ Live Templates als yasnippet-Snippets
 
+;; Magit: zeilenweise Verfeinerung reicht aus und hält große Diffs responsiv.
+;; `magit-todos-mode` wird nicht global aktiviert; die Übersicht ist auf `SPC g t`.
+(setq magit-diff-refine-hunk t)
+
 
 ;; refresh im docker mode
 (after! docker
@@ -820,11 +844,13 @@ lokale Treemacs-Fenster -- unabhaengig davon, welches Fenster gerade fokussiert 
             (treemacs--set-width
              (max treemacs-width (min +treemacs-max-width (+ longest 3)))))))))
 
-  ;; Initial beim Oeffnen (SPC o p) und nach jedem Expandieren/Kollabieren neu messen:
-  (advice-add '+treemacs/toggle    :after #'+treemacs/fit-width-to-content)
-  (advice-add 'treemacs-TAB-action  :after #'+treemacs/fit-width-to-content)
-  (advice-add 'treemacs-RET-action  :after #'+treemacs/fit-width-to-content)
-  (advice-add 'treemacs-toggle-node :after #'+treemacs/fit-width-to-content))
+  ;; Nur beim Öffnen messen. Ein vollständiger Buffer-Scan nach jedem
+  ;; Expandieren/Kollabieren machte Navigation in großen Verzeichnisbäumen zäh.
+  (advice-remove 'treemacs-TAB-action #'+treemacs/fit-width-to-content)
+  (advice-remove 'treemacs-RET-action #'+treemacs/fit-width-to-content)
+  (advice-remove 'treemacs-toggle-node #'+treemacs/fit-width-to-content)
+  (advice-remove '+treemacs/toggle #'+treemacs/fit-width-to-content)
+  (advice-add '+treemacs/toggle :after #'+treemacs/fit-width-to-content))
 
 ;; --------------------------------------------------------------------------
 ;; Syntax-Highlighting fuer .properties (conf-javaprop-mode)
@@ -910,29 +936,15 @@ Reihenfolge, mit Luecken). Fuer die wortgenaue Variante gibt es weiterhin `SPC f
 ;; (wie IntelliJ), sonst die uebliche Auswahlliste. Ohne LSP: Fallback. Zurueck: C-o.
 (defun +java/implementation-smart ()
   "Zur Implementierung springen (wie IntelliJ Ctrl+Alt+B). Genau EINE Implementierung
--> direkt dahin springen, sonst Liste. Ohne LSP: Fallback auf +lookup/implementations."
+-> direkt dahin springen, sonst Liste, ohne den Editor zu blockieren."
   (interactive)
   (if (not (bound-and-true-p lsp-mode))
-      (call-interactively #'+lookup/implementations)
-    (let* ((locs  (ignore-errors
-                    (lsp-request "textDocument/implementation"
-                                 (lsp--text-document-position-params))))
-           (items (and locs (lsp--locations-to-xref-items locs))))
-      (cond
-       ((null items)
-        (message "Keine Implementierung gefunden"))
-       ((= (length items) 1)
-        (when (fboundp 'better-jumper-set-jump) (better-jumper-set-jump))
-        (xref-push-marker-stack)
-        (let ((m (xref-location-marker (xref-item-location (car items)))))
-          (pop-to-buffer-same-window (marker-buffer m))
-          (goto-char m)
-          (recenter))
-        (message "Einzige Implementierung -- direkt gesprungen (zurueck: C-o)"))
-       (t (call-interactively #'+lookup/implementations))))))
+      (user-error "Implementierungen brauchen einen aktiven LSP-Server")
+    (+java--request-locations-async
+     "textDocument/implementation" (lsp--text-document-position-params)
+     "Implementierungen" t)))
 
-(after! lsp-mode
-  (map! :map lsp-mode-map :n "g D" #'+java/implementation-smart))
+(map! :n "g D" #'+java/implementation-smart)
 
 ;; --------------------------------------------------------------------------
 ;; Find-File: kompilierte bin/-Pfade (Eclipse-Output) ignorieren

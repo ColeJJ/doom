@@ -426,7 +426,13 @@ Setzt dafuer `yas-indent-line' auf `fixed' im EXPAND-ENV der Definition."
                                (yas--modes-to-activate)))))
     (apply orig args)
     (when pending
-      (+snippets/define-intellij-templates))))
+      (+snippets/define-intellij-templates)
+      ;; JIT kann die CAPF-Liste eines bereits offenen XML-Buffers nach dem
+      ;; nxml-Hook erneut umsortieren. Alle Liquibase-Buffer sofort korrigieren.
+      (dolist (buffer (buffer-list))
+        (with-current-buffer buffer
+          (when (derived-mode-p 'nxml-mode)
+            (+snippets/prioritize-yas-in-xml)))))))
 
 (with-eval-after-load 'yasnippet
   (advice-add 'yas--load-pending-jits :around #'+snippets--reassert-after-jit-a))
@@ -438,14 +444,44 @@ Setzt dafuer `yas-indent-line' auf `fixed' im EXPAND-ENV der Definition."
 ;; zuerst. Fuer jedes Kuerzel ohne Snippet liefert yasnippet nil und die
 ;; Schema-Completion (Tags, Attribute usw.) greift unveraendert danach.
 (defun +snippets/prioritize-yas-in-xml ()
-  "Live-Template-Vorschlaege vor XML-Schema-Vorschlaegen anzeigen."
+  "Live-Template-Vorschlaege vor XML-Schema-Vorschlaegen anzeigen.
+Stellt die programmatisch definierten Liquibase-Snippets bei Bedarf erneut her:
+yasnippets JIT-Lader kann die nxml-Tabelle nach unserem initialen Hook ersetzen."
   (when (and (bound-and-true-p yas-minor-mode)
              (fboundp 'yasnippet-capf))
+    ;; `yas-lookup-snippet' sucht den Anzeigenamen, nicht den Trigger-Key.
+    ;; Der Key ist `cs', der Name lautet bewusst ausführlicher.
+    (unless (yas-lookup-snippet "cs (leeres Changeset)" 'nxml-mode t)
+      (+snippets/define-intellij-templates))
     (setq-local completion-at-point-functions
                 (cons #'yasnippet-capf
                       (delq #'yasnippet-capf completion-at-point-functions)))))
 
-(add-hook 'nxml-mode-hook #'+snippets/prioritize-yas-in-xml)
+;; Am Ende des Mode-Hooks laufen: nxml/rng und yasnippet können CAPFs erst
+;; während ihrer eigenen Hooks ergänzen.
+(add-hook 'nxml-mode-hook #'+snippets/prioritize-yas-in-xml t)
+
+;; Doom aktiviert `yas-minor-mode' bei manchen XML-Buffern erst NACH dem
+;; `nxml-mode-hook' und hängt yasnippet-capf dabei wieder ans Ende. Dieser Hook
+;; läuft nach dieser Aktivierung und macht die Reihenfolge auch beim Wechsel in
+;; eine später geöffnete Liquibase-Datei deterministisch.
+(defun +snippets/prioritize-yas-after-enable-h ()
+  "Yasnippet-CAPF nach dessen Aktivierung in Liquibase-XML priorisieren."
+  (when (derived-mode-p 'nxml-mode)
+    (+snippets/prioritize-yas-in-xml)))
+
+(add-hook 'yas-minor-mode-hook #'+snippets/prioritize-yas-after-enable-h t)
+
+;; Absolut robust gegen nachträgliche CAPF-Mutationen (z.B. Doom-JIT-Loading):
+;; unmittelbar vor der echten Completion die Liquibase-Tabelle und Reihenfolge
+;; sicherstellen. Das ist im Normalfall nur eine Liste umsortieren, keine Suche.
+(defun +snippets--prepare-xml-capf-a (&rest _)
+  "Liquibase-Yasnippets direkt vor `completion-at-point' priorisieren."
+  (when (derived-mode-p 'nxml-mode)
+    (+snippets/prioritize-yas-in-xml)))
+
+(advice-remove 'completion-at-point #'+snippets--prepare-xml-capf-a)
+(advice-add 'completion-at-point :before #'+snippets--prepare-xml-capf-a)
 
 ;; Bereits geoeffnete Liquibase-Dateien erhalten die Reihenfolge sofort,
 ;; ohne dass sie geschlossen oder Emacs neugestartet werden muessen.

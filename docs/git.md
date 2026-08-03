@@ -6,16 +6,15 @@
 - Blame/Annotate: `SPC g B` (inline im Buffer) bzw. `SPC g A` (separate Ansicht), Time-Machine: `SPC g t`, Datei im Browser: `SPC g o`
 - Diff in der Fringe (diff-hl/vc-gutter) ist aktiv.
 
-## Branch-Diff gegen den Abzweigpunkt (`SPC g d`)
+## Datei-Diff gegen den Abzweigpunkt (`SPC g D`)
 
-**`SPC g d`** -> `+git/diff-vs-base-branch`: zeigt **alles, was auf dem aktuellen Branch
-seit dem Abzweig passiert ist** -- also den Diff gegen `develop` bzw. `master`/`main`.
-Entspricht IntelliJ **"Compare with Branch"** bzw. `git diff develop...HEAD`.
+**`SPC g D`** -> `+git/diff-buffer-file-vs-base-branch`: zeigt ausschließlich die
+**aktuelle Datei** gegen ihre Version am Merge-Base mit `develop` bzw. `master`/`main`.
+Das entspricht einem Datei-Vergleich mit dem Stand am Abzweigpunkt, nicht einem ganzen
+Branch-Diff. Lokale, noch nicht committete Änderungen sind dabei enthalten.
 
-- ohne Prefix: nur **committete** Aenderungen des Branches (Bereich `BASIS...HEAD`)
-- `C-u SPC g d`: Basis-Branch **selbst waehlen** (der erkannte ist Default)
-- `C-u C-u SPC g d`: Diff des **Arbeitsbaums** gegen den Abzweigpunkt, also inklusive
-  ungestagter/ungecommitteter Aenderungen
+- ohne Prefix: Basis-Branch automatisch erkennen
+- `C-u SPC g D`: Basis-Branch selbst wählen (der erkannte ist Default)
 
 Navigation im Diff-Buffer wie ueberall in Magit: `n`/`p` (Hunk), `TAB` (auf-/zuklappen),
 `RET` springt an die Stelle in der Datei, `q` schliesst.
@@ -33,11 +32,14 @@ Der aktuelle Branch selbst wird als Kandidat ausgelassen.
 
 Weitere Basis-Branch-Namen (z.B. `release`) lassen sich per `+git-base-branches` ergaenzen.
 
+Der bisherige gesamte Branch-Diff bleibt bei Bedarf als `M-x +git/diff-vs-base-branch`
+verfügbar, ist aber nicht mehr auf `SPC g d`/`SPC g D` gebunden.
+
 ## Datei-/Klassen-Historie (wie Telescope `git_bufcommits`)
 
 Um die Aenderungen an der aktuellen Datei Commit fuer Commit visuell durchzugehen:
 
-- **`SPC g D`** -> `magit-diff-buffer-file`: zeigt den **Diff der aktuellen Datei
+- **`SPC g d`** -> `magit-diff-buffer-file`: zeigt den **Diff der aktuellen Datei
   gegen HEAD** (den letzten Commit) -- also deine noch nicht committeten Aenderungen --
   in einem farbigen **Magit-Diff-Buffer** (Side-Buffer, wie die Commit-Ansicht).
   Navigation: `n`/`p` (Hunk), `TAB` (Hunk auf-/zuklappen), `RET` springt an die Stelle

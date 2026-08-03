@@ -327,12 +327,10 @@ Messung im geöffneten Projekt `entscheidungen` (8,5 GB, ca. 4.450 Java-Dateien)
   textDocument/codeAction` kam von der Modeline-Lightbulb: Sie fragt
   Code-Actions im `post-command-hook` fortlaufend ab.
 
-Folgende Hintergrundpfade sind daher deaktiviert:
+Folgende Hintergrundpfade bleiben deaktiviert:
 
 - `lsp-modeline-code-actions-enable nil`: kein Code-Action-Request pro
   Cursorbewegung. Quick-Fixes bleiben auf Zuruf mit `SPC c a`.
-- `lsp-enable-file-watchers nil`: JDT.LS/Maven beobachten die Projektdateien
-  selbst; Emacs erzeugt nicht zusätzlich Ereignisse für den großen Reactor.
 - `lsp-ui-sideline-enable nil`: Flycheck zeigt LSP-Diagnostics bereits inline
   und `SPC c e/w/x` navigiert sie; keine doppelten Sideline-Overlays.
 - serverseitige Reference-/Implementation-CodeLens, automatische Maven-
@@ -341,16 +339,29 @@ Folgende Hintergrundpfade sind daher deaktiviert:
 - JDT.LS startet ohne die von `lsp-java` standardmäßig gesetzten Debug-Flags
   `-Dlog.protocol=true` und `-Dlog.level=ALL`; normaler Eclipse-Fehlerlog
   bleibt verfügbar, aber der Reactor produziert keinen Detail-Protokoll-I/O.
-- GCMH sammelt erst nach 60 Sekunden Leerlauf statt zwischen kurzen
-  LSP-Antwortpausen.
+- File-Watcher sind aktiv, ignorieren aber `target/`, `.git`, `.idea` und weitere
+  Build-Verzeichnisse. Dadurch verschwinden Diagnostics nach externen Maven-/Git-
+  Änderungen wieder, ohne Ereignisfluten aus Build-Output zu erzeugen.
+- GCMH arbeitet mit 128 MB Grundschwelle (bei aktivem Doom-LSP effektiv 256 MB) und
+  15 Sekunden Idle-Delay. Das begrenzt lange GC-Pausen statt Heap-Spitzen bis 1 GB
+  aufzubauen.
 
-### Fehlerresistente Typ-Completion
+### Completion- und Reactor-Sanierung
 
-Der Fallback für Klassen-Vervollständigung bei Syntaxfehlern fragt
-`workspace/symbol` nicht mehr synchron aus dem Corfu-CAPF ab. Zuvor konnte jede
-neue Typ-Präfix-Eingabe den Emacs-Main-Thread bis zur JDT-Antwort blockieren.
-Die Anfrage läuft jetzt asynchron, Ergebnisse werden pro Buffer gecacht und das
-Completion-Popup nach Eintreffen aktualisiert.
+Eine zusätzliche `workspace/symbol`-CAPF wurde entfernt. Leere Cache-Ergebnisse
+lösten davor dieselbe Completion erneut aus; das JDT-Log zeigte dadurch bis zu 345
+Completion-Requests pro Minute. Jetzt bleibt die unveränderte
+`lsp-completion-at-point`-Quelle erhalten, inklusive der LSP-Relevanzsortierung und
+Corfus `lsp-capf`-Kategorie.
+
+Maven-Builds und `SPC m u` starten JDT.LS nicht mehr automatisch neu. Geänderte
+`.classpath`-Dateien, APT-Einstellungen und Kotlin-Binary-Roots werden gezielt per
+`workspace/didChangeWatchedFiles` gemeldet. Das verhindert mehrminütige
+Reactor-Reimporte, während derer Completion und Navigation nicht verfügbar wären.
+
+JDT-eigenes Annotation Processing ist deaktiviert: Maven liefert die generierten
+Quellen bereits. Damit entfallen doppelte QueryDSL-/Sodalis-Generierung und die
+zugehörigen Projektmodellfehler.
 
 ### Nach dieser Umstellung
 
