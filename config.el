@@ -272,7 +272,8 @@ dahin springen (wie IntelliJ), sonst die uebliche Referenzliste."
 (map! :leader
       :desc "Definition: direkt springen" "c g" #'+java/jump-to-definition
       :desc "Typ-Definition: direkt springen" "c G" #'+java/jump-to-type-definition
-      :desc "Referenzen: direkt/Liste (LSP)" "c J" #'+java/references-smart)
+      :desc "Referenzen: direkt/Liste (LSP)" "c J" #'+java/references-smart
+      :desc "Override-Methode (JDT.LS)"    "c o" #'lsp-java-generate-overrides)
 
 ;; Kein projektweites Ripgrep-Fallback: ohne LSP erhält man eine klare Meldung
 ;; statt eines minutenlangen Suchlaufs über den gesamten Maven-Reactor.
@@ -492,11 +493,48 @@ Diagnosen der anderen Dateien im Workspace/Projekt angezeigt."
        :state (consult-lsp--diagnostics--state)
        :lookup #'consult--lookup-candidate))))
 
+  (defun +consult-lsp--querydsl-class-p (file)
+    "Non-nil, wenn FILE eine generierte QueryDSL-Q-Klasse ist."
+    (and (stringp file)
+         (string-match-p "\\`Q[A-Z].*\\.java\\'"
+                         (file-name-nondirectory file))))
+
+  (defun +consult-lsp-diagnostics-project-without-querydsl (&optional all-workspaces)
+    "LSP-Projektdiagnosen zeigen, generierte QueryDSL-Q-Klassen ausblenden.
+Mit Präfix werden wie bei `consult-lsp-diagnostics' alle Workspaces einbezogen."
+    (interactive "P")
+    (unless (bound-and-true-p lsp-mode)
+      (user-error "LSP ist in dieser Datei nicht aktiv"))
+    (let ((candidates
+           (seq-filter
+            (lambda (candidate)
+              (not (+consult-lsp--querydsl-class-p
+                    (car (get-text-property 0 'consult--candidate candidate)))))
+            (consult-lsp--diagnostics--flatten-diagnostics
+             consult-lsp-diagnostics-transformer-function
+             (not all-workspaces)))))
+      (if candidates
+          (consult--read
+           candidates
+           :prompt (concat "LSP-Diagnosen ohne QueryDSL-Q-Klassen "
+                           (when all-workspaces "(alle Workspaces) "))
+           :annotate (funcall consult-lsp-diagnostics-annotate-builder-function)
+           :require-match t
+           :history t
+           :category 'consult-lsp-diagnostics
+           :sort nil
+           :group (consult--type-group consult-lsp--diagnostics--narrow)
+           :narrow (consult--type-narrow consult-lsp--diagnostics--narrow)
+           :state (consult-lsp--diagnostics--state)
+           :lookup #'consult--lookup-candidate)
+        (user-error "Keine LSP-Diagnosen außerhalb von QueryDSL-Q-Klassen"))))
+
 ;; `SPC c x' war bisher `+default/diagnostics' (= gesamte LSP-Workspace-Diagnostik).
-;; Diese bisherige Logik liegt nun auf Shift-X; die schlanke Datei-Ansicht auf x.
+;; Shift-X bleibt die Projektansicht, blendet aber die generierten QueryDSL-Q-Klassen aus.
 (map! :leader
       :desc "LSP-Diagnosen dieser Datei" "c x" #'+consult-lsp-diagnostics-current-file
-      :desc "LSP-Diagnosen Projekt/Workspace" "c X" #'+default/diagnostics)
+      :desc "LSP-Diagnosen ohne QueryDSL-Q-Klassen" "c X"
+      #'+consult-lsp-diagnostics-project-without-querydsl)
 
 
 ;; Open file in finder (macos)
@@ -815,7 +853,7 @@ rein projektlokale Dateisuche weiter `SPC s c' nutzen."
         :n "g r" #'tabulated-list-revert))
 
 ;; --------------------------------------------------------------------------
-;; Treemacs (SPC o p): Sidebar automatisch so breit wie noetig
+;; Treemacs (SPC t t): Sidebar automatisch so breit wie noetig
 ;; --------------------------------------------------------------------------
 ;; Problem: Bei fester `treemacs-width' werden lange Datei-/Ordnernamen
 ;; abgeschnitten (z.B. "annotat:", "behavio", "groupbo"). Loesung: nach dem
@@ -851,6 +889,12 @@ lokale Treemacs-Fenster -- unabhaengig davon, welches Fenster gerade fokussiert 
   (advice-remove 'treemacs-toggle-node #'+treemacs/fit-width-to-content)
   (advice-remove '+treemacs/toggle #'+treemacs/fit-width-to-content)
   (advice-add '+treemacs/toggle :after #'+treemacs/fit-width-to-content))
+
+;; Projektbaum unter dem Toggle-Prefix; der bisherige Platz unter `SPC o p'
+;; bleibt bewusst frei.
+(map! :leader
+      :desc "Projekt-Sidebar (Treemacs)" "t t" #'+treemacs/toggle)
+(define-key doom-leader-map (kbd "o p") nil)
 
 ;; --------------------------------------------------------------------------
 ;; Syntax-Highlighting fuer .properties (conf-javaprop-mode)

@@ -2494,6 +2494,19 @@ Klassen, in dem die Warnung weiterhin sinnvoll ist."
    (lambda (parent)
      (string= (treesit-node-type parent) "interface_declaration"))))
 
+(defun +java-final--record-component-p (node)
+  "Non-nil, wenn NODE eine Komponente im Kopf einer `record'-Deklaration ist.
+Record-Komponenten sind in Java implizit final. Die direkte Elternfolge
+`formal_parameter -> formal_parameters -> record_declaration' grenzt sie von
+normalen Methodenparametern innerhalb eines Records ab."
+  (let ((parameters (treesit-node-parent node)))
+    (and (string= (treesit-node-type node) "formal_parameter")
+         parameters
+         (string= (treesit-node-type parameters) "formal_parameters")
+         (let ((record (treesit-node-parent parameters)))
+           (and record
+                (string= (treesit-node-type record) "record_declaration"))))))
+
 (defvar +java-final--assign-query
   "(assignment_expression left: (identifier) @a) (update_expression (identifier) @u)"
   "tree-sitter-Query: Zuweisungsziele (=, +=, ...) sowie ++/-- .")
@@ -2516,7 +2529,8 @@ werden uebersprungen (sie koennen ja nicht `final' sein)."
       (dolist (cap (treesit-query-capture root +java-final--query))
         (let ((node (cdr cap)))
           (unless (or (+java-final--has-final node)
-                      (+java-final--in-interface-p node))
+                      (+java-final--in-interface-p node)
+                      (+java-final--record-component-p node))
             (let* ((name  (+java-final--name node))
                    (scope (+java-final--scope node))
                    (skey  (treesit-node-start scope))

@@ -218,6 +218,9 @@ LSP-Diagnosen bleiben also fÃ¼hrend, die final-Hinweise kommen zusÃ¤tzlich d
 Parameter und lokale Variablen innerhalb von **Interfaces** werden bewusst
 uebersprungen: Interface-Methoden beschreiben einen Vertrag; dort sind
 `Parameter x koennte final sein`-Hinweise nicht erwuenscht.
+Komponenten im Kopf eines Java-**Records** werden ebenfalls uebersprungen: Sie
+sind sprachseitig implizit `final`; nur normale Methodenparameter innerhalb eines
+Records werden weiterhin geprüft.
 
 **Steuerung:**
 

@@ -135,7 +135,7 @@ Mit Praefix-Arg `C-u SPC m t` laeuft das Goal nur im Modul der aktuellen Datei
 | `r h` | `+java/hotswap` | **HotSwap**: geaenderte Klassen in laufenden Debug laden -- aus jedem Buffer |
 | `o d` | `+pg/open` | DB-Viewer (Postgres/pgmacs); **`C-u o d`** = direkt Tabellensuche |
 | `o f` | `tu/open-in-finder` | Verzeichnis im Finder oeffnen |
-| `o p` | `+treemacs/toggle` | Projekt-Sidebar (Treemacs) -- Breite passt sich automatisch dem laengsten sichtbaren Eintrag an (bis `+treemacs-max-width`, Default 70) |
+| `t t` | `+treemacs/toggle` | Projekt-Sidebar (Treemacs) -- Breite passt sich automatisch dem laengsten sichtbaren Eintrag an (bis `+treemacs-max-width`, Default 70) |
 | `g w` | `magit-worktree` | Git-Worktrees verwalten |
 
 ## Live Templates / Snippets
@@ -165,11 +165,12 @@ uebernommen -- Details und komplette Kuerzelliste in [live-templates.md](live-te
 | `SPC c r` | Rename |
 | `SPC c B` | **Projekt pruefen / Build Project** (`+java/check-project`): ganzen Reactor kompilieren, ALLE Fehler projektweit (`]e`/`[e` navigieren); `C-u` = nur Modul + Dependents |
 | `SPC c n` | **Neu: Klasse/Interface/Enum ...** (`+java/new-type`, wie IntelliJ "New"): Typ waehlen (Java-Klasse/Interface/Enum/Record/Annotation, Kotlin-Klasse/Data-Class/Interface/Object/Enum) -> Datei mit Template im aktuellen Verzeichnis anlegen. Paket wird aus dem Pfad (src/main\|test/java\|kotlin) abgeleitet; Name darf ein relatives Unterpaket enthalten (`sub.paket.Name` -> erzeugt Ordner). Auch im Baum (Treemacs `N` bzw. `c j`) ins ausgewaehlte Verzeichnis. |
+| `SPC c o` | **Methode überschreiben** (wie IntelliJ „Override Methods“): zeigt die überschreibbaren Super-/Interface-Methoden; `RET` auf einer Methode fügt genau diese ein. |
 | `SPC c a` | **Code-Actions / Quick-Fixes** (IntelliJ Alt+Enter): Fixes fuer Warnungen/Fehler an der Cursor-Stelle vorschlagen und auswaehlen. Verfuegbare Fixes werden als Lightbulb in der Modeline angezeigt |
 | `SPC c w` / `SPC c W` | **Nächste / vorherige Warnung dieser Datei**: springt ausschließlich zwischen Flycheck-Warnungen im aktuellen Buffer (keine Fehler, Infos oder Treffer aus anderen Dateien); zyklisch am Ende/Anfang |
 | `SPC c e` / `SPC c E` | **Nächster / vorheriger Fehler dieser Datei**: springt ausschließlich zwischen Flycheck-Fehlern im aktuellen Buffer (keine Warnungen, Infos oder Treffer aus anderen Dateien); zyklisch am Ende/Anfang |
 | `SPC c x` | **LSP-Diagnosen dieser Datei**: Consult-Liste nur für den aktuellen Buffer |
-| `SPC c X` | **LSP-Diagnosen Projekt/Workspace** (`+default/diagnostics`): bisherige Gesamtansicht über alle Dateien |
+| `SPC c X` | **LSP-Diagnosen Projekt/Workspace**: Gesamtansicht ohne generierte QueryDSL-`Q*.java`-Klassen; mit `C-u` über alle Workspaces |
 | `SPC c f` | **Format nach IntelliJ-Profil** (`+format/intellij`): Region falls aktiv, sonst Buffer -- Java/Kotlin via JDT-Profil, sonst apheleia-Fallback |
 | `SPC c F` | **Format buffer/region** (`+format/region-or-buffer`, Dooms apheleia-Default) |
 | `SPC j d` | **Zur Definition** (direkt per LSP, `+java/jump-to-definition`) |
